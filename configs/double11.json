@@ -1,0 +1,21 @@
+{
+  "name": "淘金币双11狂享20亿",
+  "search_keyword": "淘金币",
+  "entry_labels": ["领淘金币", "淘金币", "双11赢20亿"],
+  "task_entry_labels": ["赚能量", "做任务赚能量", "赚体力", "做任务", "赚喵币"],
+  "default_browse_seconds": 15,
+  "browse_extra_seconds": 10,
+  "visit_seconds": 8,
+  "max_task_seconds": 90,
+  "settle_seconds": 2,
+  "page_timeout": 15,
+  "return_timeout": 22,
+  "max_back_steps": 4,
+  "max_attempts": 2,
+  "max_tasks": 80,
+  "max_scroll_pages": 8,
+  "allow_cross_app": true,
+  "ocr": true,
+  "scroll_browse": true,
+  "claim_rewards": true
+}

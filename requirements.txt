@@ -1,0 +1,4 @@
+hmdriver2~=1.4.4
+uiautomator2~=3.5.0
+rapidocr>=3.4,<4
+onnxruntime>=1.20,<2
