@@ -1,0 +1,76 @@
+name: Publish verified release assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to publish
+        required: true
+        default: v20261018-double11.3
+      build_run_id:
+        description: Successful Build Windows portable release run ID
+        required: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Verify and publish the exact tag's build
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v[A-Za-z0-9._-]+$') { throw 'Invalid tag' }
+          if ($env:BUILD_RUN_ID -notmatch '^\d+$') { throw 'Invalid build run ID' }
+          $revision = (& git rev-parse HEAD).Trim()
+          $build = (& gh api "repos/$env:GH_REPO/actions/runs/$env:BUILD_RUN_ID" | ConvertFrom-Json)
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect build run' }
+          if ($build.conclusion -ne 'success' -or $build.head_sha -ne $revision -or $build.name -ne 'Build Windows portable release') {
+            throw 'Build run must be successful and match this release commit'
+          }
+          & gh run download $env:BUILD_RUN_ID --name MiaoTask-windows-x64 --dir release-assets
+          if ($LASTEXITCODE -ne 0) { throw 'Artifact download failed' }
+          $zipName = "MiaoTask-$env:RELEASE_TAG-windows-x64.zip"
+          $zipPath = Join-Path release-assets $zipName
+          $sumPath = $zipPath + '.sha256'
+          $expectedHash = ((Get-Content -LiteralPath $sumPath -Raw).Trim() -split '\s+')[0]
+          $actualHash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($expectedHash -ne $actualHash) { throw 'Artifact checksum mismatch' }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $zipPath))
+          try {
+            $entry = $zip.GetEntry('MiaoTask/build-manifest.json')
+            $reader = [IO.StreamReader]::new($entry.Open())
+            try { $manifest = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+          } finally { $zip.Dispose() }
+          if ($manifest.source_commit -ne $revision -or $manifest.version -ne $env:RELEASE_TAG -or -not $manifest.smoke_test_passed) {
+            throw 'Portable package provenance mismatch'
+          }
+          $notesPath = Join-Path docs "RELEASE-$env:RELEASE_TAG.md"
+          $notes = Get-Content -LiteralPath $notesPath -Raw
+          $notes += "`n`n## 本次构建`n`n源码提交：$revision`n`nZIP SHA256：$actualHash`n"
+          $publicNotes = Join-Path $env:RUNNER_TEMP 'miao-release-notes.md'
+          [IO.File]::WriteAllText($publicNotes, $notes, [Text.UTF8Encoding]::new($false))
+          $releaseJson = & gh release view $env:RELEASE_TAG --json isDraft 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            $release = $releaseJson | ConvertFrom-Json
+            if (-not $release.isDraft) { throw 'Release already published; preserving its assets' }
+            & gh release upload $env:RELEASE_TAG $zipPath $sumPath --clobber
+            if ($LASTEXITCODE -ne 0) { throw 'Release asset upload failed' }
+            & gh release edit $env:RELEASE_TAG --draft=false --latest --notes-file $publicNotes
+          } else {
+            & gh release create $env:RELEASE_TAG $zipPath $sumPath --verify-tag --latest --title "$env:RELEASE_TAG · 双11任务助手 Windows 便携版" --notes-file $publicNotes
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Publishing failed' }
+          & gh release view $env:RELEASE_TAG --json url,isDraft,assets
