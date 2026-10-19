@@ -6,9 +6,9 @@
 
 从 [v20261019-double11.4 的 Release 附件](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11/releases/tag/v20261019-double11.4) 下载：
 
-* `MiaoTask-Guide-PC-1920x1080.mp4`：16:9 横版，适合 B站主投稿。
-* `MiaoTask-Guide-Phone-1080x1920.mp4`：9:16 竖版，重新排版，适合手机观看。
-* `MiaoTask-Promo-20261019.zip`：两版成片、横竖封面、中文 SRT、解说稿及投稿说明。
+* [横版 MP4](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11/releases/download/v20261019-double11.4/MiaoTask-Guide-PC-1920x1080.mp4)：1920×1080、16:9，适合 B站主投稿。
+* [竖版 MP4](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11/releases/download/v20261019-double11.4/MiaoTask-Guide-Phone-1080x1920.mp4)：1080×1920、9:16，重新排版，适合手机观看。
+* [完整宣传素材 ZIP](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11/releases/download/v20261019-double11.4/MiaoTask-Promo-20261019.zip)：两版成片、横竖封面、中文 SRT、解说稿及投稿说明。
 
 ## 演示内容与真实结果
 

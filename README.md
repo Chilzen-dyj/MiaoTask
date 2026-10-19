@@ -6,6 +6,8 @@
 
 **[下载 Windows 便携版](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11/releases/latest)** · **[操作演示与宣传素材](docs/DEMO.md)** · **[详细使用说明](PORTABLE_README.md)**
 
+3分27秒操作演示：**[横版 MP4](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11/releases/download/v20261019-double11.4/MiaoTask-Guide-PC-1920x1080.mp4)** · **[竖版 MP4](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11/releases/download/v20261019-double11.4/MiaoTask-Guide-Phone-1080x1920.mp4)** · **[封面、字幕与素材包](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11/releases/download/v20261019-double11.4/MiaoTask-Promo-20261019.zip)**
+
 ## 页面长什么样
 
 下图使用 **1920×1080 正常桌面视口**，保留控制台的桌面布局。内容来自当天实录报告回放，设备标识已隐藏；右侧为识别阶段的手机快照，与报告结果并非同一时刻。
