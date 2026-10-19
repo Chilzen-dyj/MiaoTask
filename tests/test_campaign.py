@@ -105,6 +105,24 @@ class RecognitionTests(unittest.TestCase):
         self.assertEqual(task.seconds, 5)
         self.assertIn('浏览5秒', task.detail)
 
+    def test_aggregated_modal_row_ignores_obscured_homepage(self):
+        for title, expected in [('好物沉浸看(0/10)浏览15秒+400', 'browse'),
+                                ('逛一逛支付宝农场(0/1)点击去逛+600', 'visit'),
+                                ('拍立淘逛感兴趣的宝贝(0/5)浏览5秒+400', 'browse')]:
+            screen = task_screen()
+            screen.nodes[3].text = title
+            screen.nodes[4].text = '淘宝闪购 下单得500 电竞游戏鼠标'
+            task = parse_tasks(screen.nodes)[0]
+            self.assertEqual(task.kind, expected)
+            self.assertNotIn('下单', task.detail)
+
+    def test_repeated_caption_is_description_not_part_of_task_identity(self):
+        screen = task_screen()
+        screen.nodes[3].text = '逛一逛蚂蚁庄园(0/1)逛一逛蚂蚁庄园+600'
+        task = parse_tasks(screen.nodes)[0]
+        self.assertEqual(task.title, '逛一逛蚂蚁庄园')
+        self.assertEqual(task.detail, '逛一逛蚂蚁庄园+600')
+
     def test_alipay_title_is_not_a_payment(self):
         screen = task_screen()
         screen.nodes[3].text = '逛一逛支付宝农场(0/1)'
@@ -157,6 +175,37 @@ class RecognitionTests(unittest.TestCase):
 
 
 class RunnerTests(unittest.TestCase):
+    def test_kind_selection_skips_without_clicking_and_does_not_persist(self):
+        r = self.clock_runner()
+        screen = task_screen()
+        r.config['enabled_task_kinds'] = ['search']
+        r.ensure_list = Mock(return_value=screen)
+        r.read = Mock(return_value=screen)
+        self.assertEqual(r.run()['attempts'], 0)
+        r.device.click.assert_not_called()
+        self.assertIn('本轮未选择', next(iter(r.records.values()))['reason'])
+        self.assertFalse(r.unavailable_tasks)
+        fresh = CampaignRunner(r.device, unavailable_tasks=r.unavailable_tasks)
+        fresh.remember(fresh.tasks(screen))
+        self.assertEqual(next(iter(fresh.records.values()))['status'], 'pending')
+
+    def test_kind_selection_rejects_empty_unknown_and_duplicate_values(self):
+        for invalid in ([], ['manual'], ['browse', 'browse'], 'browse', [None]):
+            config = load_config()
+            config['enabled_task_kinds'] = invalid
+            with self.assertRaises(ValueError):
+                validate_config(config)
+
+    def test_auto_entry_waits_for_restored_task_after_transient_splash(self):
+        r = self.clock_runner()
+        home = Screen([], 1440, 3200, 'com.miui.home')
+        splash = Screen([], 1440, 3200, 'com.taobao.taobao')
+        restored = task_screen()
+        r.read = Mock(side_effect=[home, splash, restored])
+        self.assertIs(r.ensure_list(auto_open=True), restored)
+        r.device.resume_app.assert_called_once_with('com.taobao.taobao')
+        self.assertEqual(r.origin, 'com.taobao.taobao')
+
     def clock_runner(self):
         r = self.runner()
         clock = [0.0]
@@ -179,13 +228,23 @@ class RunnerTests(unittest.TestCase):
             ['综合', '销量,未选中', '筛选', '手机壳', '包邮', '¥15', '100人付款', '商品列表'])],
                       1440, 3200, 'com.taobao.taobao')
 
+    def test_embedded_campaign_search_grid_without_sort_toolbar(self):
+        screen = Screen([node('浏览15秒可领400', 700, 160),
+                         node('搜索', 1180, 350, 200), node('a', 180, 350),
+                         node('商品甲', 30, 1300), node('¥21.68', 30, 1450),
+                         node('金币热卖价', 300, 1450), node('商品乙', 760, 1300),
+                         node('¥448.23', 760, 1450)], 1440, 3200, 'com.taobao.taobao')
+        self.assertTrue(CampaignRunner.search_results_ready(screen))
+        screen.nodes = screen.nodes[:3] + [node('历史搜索', 30, 600), node('搜索发现', 30, 1100)]
+        self.assertFalse(CampaignRunner.search_results_ready(screen))
+
     def test_search_types_then_clicks_button_not_identical_edit_label(self):
         r = self.clock_runner()
         screen, tree = self.search_page()
         r.device.dump_hierarchy.return_value = tree
         r.read = Mock(return_value=self.results_page())
         self.assertTrue(r.handle_search(screen))
-        self.assertEqual(r.device.click.call_args_list[-1].args, (1290, 221))
+        r.device.click.assert_called_once_with(1290, 221)
         r.device.input_text.assert_called_once_with('手机壳')
         r.device.clear_text.assert_not_called()
 
@@ -197,6 +256,26 @@ class RunnerTests(unittest.TestCase):
         self.assertTrue(r.handle_search(screen))
         r.device.click.assert_called_once_with(1290, 221)
         r.device.input_text.assert_not_called()
+
+    def test_search_relocates_submit_after_input_expands_reward_header(self):
+        r = self.clock_runner()
+        screen, tree = self.search_page()
+        moved = json.loads(json.dumps(tree))
+        moved['children'][1]['bounds'] = '[1190,264][1390,379]'
+        r.device.dump_hierarchy.side_effect = [tree, moved]
+        r.read = Mock(return_value=self.results_page())
+        self.assertTrue(r.handle_search(screen))
+        r.device.click.assert_called_once_with(1290, 321)
+
+    def test_browse_caption_on_search_landing_submits_before_browsing(self):
+        r = self.clock_runner()
+        before = task_screen()
+        landing, _ = self.search_page()
+        r.read = Mock(return_value=landing)
+        r.handle_search = Mock(return_value=True)
+        r.recover = Mock(return_value=task_screen(1))
+        r.execute(r.tasks(before)[0], before)
+        r.handle_search.assert_called_once_with(landing)
 
     def test_search_can_use_ascii_when_there_are_no_suggestions(self):
         r = self.clock_runner()
@@ -448,7 +527,7 @@ class RunnerTests(unittest.TestCase):
     def test_completion_hint_ends_extended_browse_early(self):
         r, clock, destination = self.scrolling_runner()
         completed = Screen([node('任务已完成', 800, 200), node('商品列表', 50, 500)], 1440, 3200, r.origin)
-        r.read.side_effect = lambda: completed if clock[0] >= 8 else destination
+        r.read.side_effect = lambda **kwargs: completed if clock[0] >= 8 else destination
         before = task_screen()
         _, explicit, _ = r.execute(r.tasks(before)[0], before)
         self.assertTrue(explicit)
@@ -477,6 +556,33 @@ class RunnerTests(unittest.TestCase):
 
 
 class NativeInputTests(unittest.TestCase):
+    def test_inaccessible_focus_uses_unique_native_edit_without_ime_changes(self):
+        from uiautomator2.exceptions import UiObjectNotFoundError
+        adapter = DeviceAdapter.__new__(DeviceAdapter)
+        adapter.device_type = 'uiautomator2'
+        focused, edit = Mock(), Mock()
+        edit.count = 1
+        focused.set_text.side_effect = UiObjectNotFoundError(-32001, 'missing focus')
+        adapter._device = Mock(side_effect=lambda **kwargs: focused if 'focused' in kwargs else edit)
+        adapter.input_text('手机壳')
+        edit.set_text.assert_called_once_with('手机壳')
+        adapter._device.shell.assert_not_called()
+        adapter._device.set_input_ime.assert_not_called()
+        adapter._device.send_keys.assert_not_called()
+
+    def test_ambiguous_native_edits_do_not_receive_fallback_input(self):
+        from uiautomator2.exceptions import UiObjectNotFoundError
+        adapter = DeviceAdapter.__new__(DeviceAdapter)
+        adapter.device_type = 'uiautomator2'
+        focused, edit = Mock(), Mock()
+        edit.count = 2
+        focused.set_text.side_effect = UiObjectNotFoundError(-32001, 'missing focus')
+        adapter._device = Mock(side_effect=lambda **kwargs: focused if 'focused' in kwargs else edit)
+        with self.assertRaises(UiObjectNotFoundError):
+            adapter.input_text('a')
+        edit.set_text.assert_not_called()
+        adapter._device.shell.assert_not_called()
+
     def test_android_text_input_never_uses_or_changes_an_ime(self):
         adapter = DeviceAdapter.__new__(DeviceAdapter)
         adapter.device_type = 'uiautomator2'

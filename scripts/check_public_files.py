@@ -15,6 +15,14 @@ SOURCE_DIRS = {'.github', 'configs', 'docs', 'modules', 'scripts', 'tests', 'web
 PRIVATE_PARTS = {'runtime', 'private', 'screenshots', 'captures', 'reports', 'backups',
                  '.venv', 'venv', 'env', 'build', 'dist', '__pycache__', '.ruff_cache', '.idea', '.vscode'}
 SOURCE_SUFFIXES = {'.py', '.md', '.json', '.yml', '.yaml', '.html', '.css', '.js', '.txt', '.lock'}
+# Individually reviewed documentation graphics only. Never allow arbitrary captures.
+PUBLIC_IMAGES = {
+    'docs/assets/hero.png': 'png',
+    'docs/assets/workflow.png': 'png',
+    'docs/assets/console-desktop.webp': 'webp',
+    'docs/assets/settings-desktop.webp': 'webp',
+    'docs/assets/results-desktop.webp': 'webp',
+}
 SECRET_PATTERNS = (
     re.compile(rb'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'),
     re.compile(rb'\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{50,})\b'),
@@ -31,15 +39,21 @@ def audit_file(name, content, forbidden=()):
         problems.append('unsafe path')
     if any(part in PRIVATE_PARTS for part in path.parts):
         problems.append('local/private directory')
-    if name not in ROOT_FILES and (not path.parts or path.parts[0] not in SOURCE_DIRS
+    image_type = PUBLIC_IMAGES.get(name)
+    if not image_type and name not in ROOT_FILES and (not path.parts or path.parts[0] not in SOURCE_DIRS
                                    or path.suffix not in SOURCE_SUFFIXES):
         problems.append('outside public source allowlist')
     if (path.name.startswith('.env') or path.name.startswith('adbkey')
             or re.search(r'(^|[._-])(device|devices|local|private|credentials)([._-]|$)', path.name, re.I)
             and path.suffix in {'.json', '.txt', '.xml', '.yaml', '.yml'}):
         problems.append('local configuration or credential filename')
-    if len(content) > 2_000_000 or b'\0' in content:
+    if len(content) > 2_000_000 or not image_type and b'\0' in content:
         problems.append('binary or oversized source file')
+    if image_type:
+        valid = (image_type == 'png' and content.startswith(b'\x89PNG\r\n\x1a\n')
+                 or image_type == 'webp' and content.startswith(b'RIFF') and content[8:12] == b'WEBP')
+        if not valid:
+            problems.append('invalid public image format')
     if any(pattern.search(content) for pattern in SECRET_PATTERNS):
         problems.append('credential or personal machine path')
     if any(value and value.encode('utf-8') in content for value in forbidden):

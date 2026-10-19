@@ -18,6 +18,16 @@ class PublicFilesTests(unittest.TestCase):
         for name in ('configs/device.local.json', 'configs/devices.json', '.env', 'adbkey'):
             self.assertTrue(audit_file(name, b'private configuration'))
 
+    def test_only_reviewed_image_paths_and_signatures_are_allowed(self):
+        png = b'\x89PNG\r\n\x1a\n\0public illustration'
+        webp = b'RIFF\0\0\0\0WEBPpublic screenshot'
+        self.assertEqual(audit_file('docs/assets/hero.png', png), [])
+        self.assertEqual(audit_file('docs/assets/console-desktop.webp', webp), [])
+        self.assertTrue(audit_file('docs/assets/phone-private.png', png))
+        self.assertTrue(audit_file('docs/assets/hero.png', b'not a PNG'))
+        self.assertTrue(audit_file('docs/assets/console-desktop.webp', png))
+        self.assertTrue(audit_file('docs/assets/hero.png', png + b'x' * 2_000_000))
+
     def test_tokens_are_rejected_without_echoing_the_value(self):
         token = b'gh' + b'p_' + b'x' * 36
         reasons = audit_file('main.py', b'token = "' + token + b'"')

@@ -147,7 +147,18 @@ class DeviceAdapter:
         else:
             # The native editable node supports Unicode directly. send_keys /
             # clear_text may install and switch IMEs and then retry broadcasts.
-            self._device(focused=True).set_text(text)
+            from uiautomator2.exceptions import UiObjectNotFoundError
+            try:
+                self._device(focused=True).set_text(text)
+            except UiObjectNotFoundError:
+                # Activity search wraps its input in a wide clickable region;
+                # tapping that region may not focus it. Native set_text also
+                # works on an unfocused input, provided it is unambiguous.
+                edit = self._device(className='android.widget.EditText')
+                if edit.count != 1:
+                    raise
+                logger.info('输入框未暴露焦点，直接填写唯一原生输入框')
+                edit.set_text(text)
 
     def clear_text(self):
         """清除文本"""

@@ -43,6 +43,12 @@ def validate_config(config):
     for key in ('allow_cross_app', 'ocr', 'scroll_browse', 'claim_rewards'):
         if not isinstance(config.get(key), bool):
             raise ValueError(f'{key} 必须为布尔值')
+    kinds = config.get('enabled_task_kinds', ['browse', 'search', 'visit', 'claim'])
+    if (not isinstance(kinds, list) or not kinds
+            or any(not isinstance(kind, str) or kind not in {'browse', 'search', 'visit', 'claim'} for kind in kinds)
+            or len(kinds) != len(set(kinds))):
+        raise ValueError('本轮任务类型至少选择一项，且只能包含浏览、搜索、跳转和领奖')
+    config['enabled_task_kinds'] = kinds
     if not isinstance(config.get('search_keyword'), str) or len(config['search_keyword']) > 120:
         raise ValueError('活动搜索词过长或格式错误')
     for key in ('entry_labels', 'task_entry_labels'):
@@ -272,7 +278,9 @@ class CampaignRunner:
 
     def ensure_list(self, auto_open=False):
         self.update('locating', message='识别活动与任务列表')
-        screen = self.read()
+        # Confirm the painted foreground before using an entry: some activity
+        # modals temporarily expose only the still-readable homepage below.
+        screen = self.read(force_ocr=bool(self.config['ocr']))
         self.guard(screen)
         if is_task_list(screen.nodes):
             if not screen.package.startswith('com.taobao.taobao'):
@@ -285,21 +293,39 @@ class CampaignRunner:
             if screen.package != package:
                 self.device.resume_app(package)
                 self.control.wait(1)
-                screen = self.read()
-            panel_clicked = self.open_task_panel(screen)
-            if not panel_clicked:
-                # Use actual homepage entries before falling back to search.
+                # A restored WebView may expose the old background controls
+                # before its foreground modal hierarchy is ready. Use what is
+                # actually painted before clicking a possible entry beneath it.
+                screen = self.read(force_ocr=bool(self.config['ocr']))
+            # Restoring the existing Android task may briefly expose a splash
+            # or a stale hierarchy. Observe the restored page before choosing
+            # a homepage entry or search; it may already be the task panel.
+            entry_deadline = self.control.now() + self.config['page_timeout']
+            while self.control.now() < entry_deadline:
+                self.guard(screen)
+                if is_task_list(screen.nodes):
+                    if not screen.package.startswith('com.taobao.taobao'):
+                        raise NeedsAttention('当前列表不属于淘宝，请在淘宝打开活动任务列表')
+                    self.origin = screen.package
+                    return screen
+                if self.open_task_panel(screen):
+                    panel_clicked = True
+                    break
                 entry = next((screen.find(label, exact=True) for label in self.config['entry_labels']
                               if screen.find(label, exact=True)), None)
                 if entry:
                     self.click(entry)
-                else:
+                    break
+                if screen.find(r'^搜索栏$|^搜索框$'):
                     from modules.utils import open_taobao_search
                     open_taobao_search(self.device, self.config['search_keyword'], self.control)
+                    break
+                self.control.wait(.6)
+                screen = self.read(force_ocr=bool(self.config['ocr']))
         deadline = self.control.now() + self.config['page_timeout']
         while self.control.now() < deadline:
             self.control.wait(.6)
-            screen = self.read()
+            screen = self.read(force_ocr=bool(self.config['ocr']))
             self.guard(screen)
             if is_task_list(screen.nodes):
                 if not screen.package.startswith('com.taobao.taobao'):
@@ -316,7 +342,7 @@ class CampaignRunner:
         deadline = self.control.now() + self.config['return_timeout']
         back_count, resumed, panel_clicked = 0, False, False
         while self.control.now() < deadline:
-            screen = self.read()
+            screen = self.read(force_ocr=bool(self.config['ocr']))
             if screen.package == self.origin and is_task_list(screen.nodes):
                 return screen
             self.guard(screen)
@@ -357,7 +383,16 @@ class CampaignRunner:
             return False
         filters = sum(bool(screen.find(pattern)) for pattern in
                       (r'^综合', r'^销量', r'^筛选', r'^店铺', r'^价格'))
-        return filters >= 2 and len(screen.nodes) >= 8
+        if filters >= 2 and len(screen.nodes) >= 8:
+            return True
+        # Double 11's embedded search results use an orange browse countdown
+        # and a product grid instead of the normal sort/filter toolbar.
+        banner = screen.find(r'浏览\d+[秒sS](?:可领|可得|得)|浏览完成.*(?:奖励|能量)')
+        search = next((n for n in screen.nodes if normalize(n.text) == '搜索'
+                       and n.center[1] < screen.height * .25), None)
+        products = [n for n in screen.nodes if search and n.center[1] > search.bounds[3]
+                    and re.search(r'[¥￥]\s*\d|金币热卖价|金币已抵', n.text)]
+        return bool(banner and search and len(products) >= 2 and len(screen.nodes) >= 8)
 
     @staticmethod
     def search_controls(tree):
@@ -407,17 +442,38 @@ class CampaignRunner:
                 return False
             query = min(candidates, key=lambda n: (n.center[1], n.center[0])).text if candidates else 'a'
             bounds = bounds_of(edit.get('bounds', edit.get('rect')))
-            self.click(TextNode('', bounds))
+            # Android's embedded search input opens a different search overlay
+            # when tapped. Fill its native node directly so the captured submit
+            # button continues to belong to the same page.
+            if self.device.device_type == 'hmdriver2':
+                self.click(TextNode('', bounds))
             self.control.check()
             # Native set_text replaces the field directly, without an IME APK.
             self.device.input_text(query)
             self.control.wait(.3)
+            # Filling the activity input expands its orange reward header and
+            # moves the submit button. Never reuse its pre-input coordinates.
+            _, refreshed_buttons = self.search_controls(self.device.dump_hierarchy())
+            refreshed_buttons = [n for n in refreshed_buttons
+                                 if n.center[0] > screen.width * .7
+                                 and n.center[1] < screen.height * .25
+                                 and n.bounds[2] - n.bounds[0] < screen.width * .3]
+            if not refreshed_buttons:
+                fresh = self.read(force_ocr=bool(self.config['ocr']))
+                refreshed_buttons = [n for n in fresh.nodes if normalize(n.text) == '搜索'
+                                     and n.center[0] > fresh.width * .7
+                                     and n.center[1] < fresh.height * .25
+                                     and n.bounds[2] - n.bounds[0] < fresh.width * .3]
+            if not refreshed_buttons:
+                logger.warning('输入后未找到当前页面的搜索按钮，不使用旧坐标提交')
+                return False
+            button = max(refreshed_buttons, key=lambda n: n.center[0])
         self.click(button)
         logger.info('已点击搜索提交按钮，等待商品结果页')
         deadline = self.control.now() + self.config['page_timeout']
         while self.control.now() < deadline:
             self.control.wait(.5)
-            result = self.read()
+            result = self.read(force_ocr=bool(self.config['ocr']))
             self.guard(result)
             if self.search_results_ready(result):
                 logger.info('已确认进入搜索结果页，开始浏览计时')
@@ -438,7 +494,7 @@ class CampaignRunner:
         screen, left = before, False
         searched = False
         while self.control.now() < deadline:
-            screen = self.read()
+            screen = self.read(force_ocr=bool(self.config['ocr']))
             # Always make the first real jump attempt. Installation evidence is
             # read from this device only, never from a bundled skip list.
             self.check_destination(screen)
@@ -477,7 +533,11 @@ class CampaignRunner:
                 return self.recover(), False, False
             self.stats.cross_app += 1
             logger.info('跨应用浏览：%s', screen.package)
-        if task.kind == 'search':
+        # Captions rotate between browse/search promotions. The destination is
+        # authoritative when a browse caption opens the activity search form.
+        search_landing = (task.kind == 'browse' and screen.package == self.origin
+                          and screen.find(r'^历史搜索$|^搜索发现$|^搜索有福利$|^搜索后浏览立得奖励$'))
+        if task.kind == 'search' or search_landing:
             searched = self.handle_search(screen)
             if not searched:
                 return self.recover(), False, cross
@@ -619,6 +679,9 @@ class CampaignRunner:
             for task in tasks:
                 failure_key = (task.key, task.current)
                 if task.kind in ('done', 'manual') or self.records[task.key]['status'] == 'disabled':
+                    continue
+                if task.kind not in self.config['enabled_task_kinds']:
+                    self.records[task.key].update(status='disabled', reason='本轮未选择该任务类型；调整设置后可再次执行')
                     continue
                 if task.kind == 'claim' and not self.config['claim_rewards']:
                     continue

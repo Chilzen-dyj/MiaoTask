@@ -8,7 +8,7 @@ const kindLabels = {browse:'浏览',search:'搜索',visit:'跳转',claim:'领奖
 let state, token='', filter='all', taskHash='', logsHash='', initialized=false, requesting=false, toastTimer;
 function el(tag, cls, text) {const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;}
 function toast(text){$('toast').textContent=text;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,6000);}
-function config(){return {default_browse_seconds:Number($('browse-seconds').value),browse_extra_seconds:Number($('browse-extra').value),max_attempts:Number($('max-attempts').value),max_tasks:Number($('max-tasks').value),allow_cross_app:$('cross-app').checked,ocr:$('ocr').checked,scroll_browse:$('scroll').checked,claim_rewards:$('claim').checked};}
+function config(){return {default_browse_seconds:Number($('browse-seconds').value),browse_extra_seconds:Number($('browse-extra').value),max_attempts:Number($('max-attempts').value),max_tasks:Number($('max-tasks').value),enabled_task_kinds:['browse','search','visit','claim'].filter(k=>$('kind-'+k).checked),allow_cross_app:$('cross-app').checked,ocr:$('ocr').checked,scroll_browse:$('scroll').checked,claim_rewards:$('claim').checked};}
 async function action(name){
   if(requesting)return;
   if(['run','scan','connect','configure'].includes(name)&&!$('settings-form').reportValidity())return;
@@ -52,7 +52,7 @@ function render(){
   const stats=state.stats||{};for(const [id,key] of [['completed','completed'],['claims','claims'],['cross','cross_app'],['skipped','skipped'],['failed','failed']])$('stat-'+id).textContent=stats[key]||0;
   const seconds=stats.elapsed||0;$('elapsed').textContent=`累计运行 ${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`;
   $('package-name').textContent=state.package||'设备未连接';$('preview-source').textContent=state.source==='ocr'?'本地 OCR 识别':state.source==='ui'?'页面控件识别':'手机截图预览';
-  if(!initialized){const c=state.config;$('browse-seconds').value=c.default_browse_seconds;$('browse-extra').value=c.browse_extra_seconds;$('max-attempts').value=c.max_attempts;$('max-tasks').value=c.max_tasks;$('cross-app').checked=c.allow_cross_app;$('ocr').checked=c.ocr;$('scroll').checked=c.scroll_browse;$('claim').checked=c.claim_rewards;initialized=true;}
+  if(!initialized){const c=state.config;$('browse-seconds').value=c.default_browse_seconds;$('browse-extra').value=c.browse_extra_seconds;$('max-attempts').value=c.max_attempts;$('max-tasks').value=c.max_tasks;$('cross-app').checked=c.allow_cross_app;$('ocr').checked=c.ocr;$('scroll').checked=c.scroll_browse;$('claim').checked=c.claim_rewards;for(const k of ['browse','search','visit','claim'])$('kind-'+k).checked=(c.enabled_task_kinds||['browse','search','visit','claim']).includes(k);initialized=true;}
   renderTasks();renderLogs();
 }
 async function poll(){try{const response=await fetch('/api/state');if(!response.ok)throw new Error('控制台连接失败');state=await response.json();token=state.token;render();}catch(e){$('connection-label').replaceChildren(el('span'),document.createTextNode('服务已断开'));for(const id of ['run','scan','connect','capture','pause','stop'])$(id).disabled=true;}}

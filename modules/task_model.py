@@ -117,7 +117,17 @@ def parse_tasks(nodes, width=1440, height=3200):
         if not progress:
             continue
         current, total = map(int, progress.groups()) if progress else (0, 1)
-        title = PROGRESS_RE.sub("", title).strip()
+        # Some WebViews expose the modal's complete row in one node while
+        # continuing to expose the obscured homepage underneath. Once this
+        # node already includes its description, nearby background text must
+        # not contribute payment/game keywords or app names to this task.
+        suffix = title[progress.end():].strip()
+        if suffix and row and any(n.source == 'ui' and normalize(n.text) == title for n in row):
+            texts = [title]
+            detail = suffix
+            title = title[:progress.start()].strip()
+        else:
+            title = PROGRESS_RE.sub("", title).strip()
         # Themis sometimes exposes a whole row as one accessibility string,
         # whereas OCR separates the title and description into two lines.
         description = re.search(r'(?:下滑)?浏览\d+[秒sS]|点击去逛|跳转得(?:奖励)?|玩\d+款游戏得|邀请好友成功|去答题最高得|去答题得', title)
