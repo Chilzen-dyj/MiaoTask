@@ -56,8 +56,8 @@ PROGRESS_RE = re.compile(r"[([]\s*(\d+)\s*/\s*(\d+)\s*[)\]]")
 UNSUPPORTED_RE = re.compile(r"下单|购买|支付\d|支付订单|充值|开通|订阅|邀请|助力|组队|分享|加购|收藏|关注|授权|登录|登陆|实名|下载|安装|答题|考试|拍照|拍摄|发布|评价|种树|喂鸡|浇水")
 EXCLUDED_RE = re.compile(r"游戏|拉人|拉\d+人|邀请|助力|组队|考试|答题")
 DRAW_RE = re.compile(r"抽奖|夺宝|抽\d+元红包")
-# Only explicit app names are mapped: internal channels such as 淘宝闪购 must
-# remain usable without installing another app.
+# Map explicit app names and known Alipay mini-app brands; internal channels
+# such as 淘宝闪购 remain usable without installing another application.
 EXTERNAL_APPS = (
     ('快手极速版', ('com.kuaishou.nebula',)),
     ('快手', ('com.smile.gifmaker', 'com.kuaishou.nebula')),
@@ -145,6 +145,8 @@ def parse_tasks(nodes, width=1440, height=3200):
         action = normalize(button.text)
         target_app, packages = next(((name, packages) for name, packages in EXTERNAL_APPS
                                      if name in title), ('', ()))
+        if not target_app and re.search(r'蚂蚁庄园|蚂蚁森林', title):
+            target_app, packages = '支付宝', ('com.eg.android.AlipayGphone',)
         flash_visit = (title == '领闪购红包下单直接省' and '点击去逛' in combined
                        and not re.search(r'需下单|完成下单|支付|购买|消费|订单', detail))
         passive_app_visit = bool(target_app and re.search(r'跳转得(?:奖励)?|点击去逛', detail))

@@ -1,6 +1,8 @@
-"""One hierarchy RPC per observation; OCR only for inaccessible app content."""
+"""Prefer readable controls; visual verification skips redundant hierarchy RPCs."""
+import copy
 from dataclasses import dataclass
 from functools import lru_cache
+import hashlib
 import logging
 import re
 import time
@@ -30,6 +32,7 @@ class Screen:
     height: int
     package: str
     source: str = "ui"
+    tree: object = None
 
     @property
     def text(self):
@@ -54,6 +57,9 @@ class ScreenReader:
         self.last_image = None
         self.last_screen = None
         self._last_preview = 0
+        self._ocr_cache_key = None
+        self._ocr_cache_nodes = None
+        self.last_observation_seconds = 0.0
 
     def _flatten(self, tree):
         nodes = []
@@ -93,28 +99,47 @@ class ScreenReader:
             nodes.append(TextNode(text, bounds, "ocr"))
         return nodes
 
+    def _image_nodes(self, image):
+        # Include every original RGB pixel and the dimensions. A thumbnail or
+        # perceptual hash can miss a changed countdown or modal and is unsafe.
+        key = (image.size, hashlib.sha256(image.tobytes()).digest())
+        if key == self._ocr_cache_key:
+            return copy.deepcopy(self._ocr_cache_nodes)
+        nodes = self._ocr(image)
+        self._ocr_cache_key = key
+        self._ocr_cache_nodes = copy.deepcopy(nodes)
+        return nodes
+
+    def _capture(self):
+        image = self.device.screenshot().convert('RGB')
+        self.last_image = image
+        self._size = image.size
+        if self.on_image:
+            self.on_image(image)
+        self._last_preview = time.monotonic()
+        return image
+
     def read(self, force_ocr=False):
-        tree = self.device.dump_hierarchy()
+        started = time.monotonic()
+        direct_visual = bool(force_ocr and self.ocr_enabled)
+        tree = None if direct_visual else self.device.dump_hierarchy()
         package = self.device.current_app().get("package", "")
-        nodes = self._flatten(tree)
+        nodes = [] if direct_visual else self._flatten(tree)
         meaningful = [n for n in nodes if n.bounds[3] - n.bounds[1] < (self._size or (1440, 3200))[1] * .4]
         source = "ui"
         if self.ocr_enabled and (force_ocr or len(meaningful) < 5):
             if not self._ocr_notice:
                 logger.info("页面控件不可读，启用本地 OCR 识别（截图不上传）")
                 self._ocr_notice = True
-            image = self.device.screenshot()
-            self.last_image = image
-            self._size = image.size
-            if self.on_image:
-                self.on_image(image)
-            nodes = self._ocr(image)
+            image = self._capture()
+            nodes = self._image_nodes(image)
             source = "ocr"
-        elif self.on_image and time.monotonic() - self._last_preview > 5:
-            self.on_image(self.device.screenshot())
-            self._last_preview = time.monotonic()
+        elif (self.on_image and not getattr(self.device, 'preview_managed', False)
+              and time.monotonic() - self._last_preview >= 1):
+            self._capture()
         if self._size is None:
             self._size = self.device.display_size
-        screen = Screen(nodes, *self._size, package, source)
+        screen = Screen(nodes, *self._size, package, source, tree)
         self.last_screen = screen
+        self.last_observation_seconds = time.monotonic() - started
         return screen

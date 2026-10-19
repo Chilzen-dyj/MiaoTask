@@ -14,7 +14,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe main.py
 ```
 
-Windows 可使用 `start.bat`。自动打开活动会优先寻找首页可见入口，找不到时尝试搜索活动词。
+Windows 可使用 `start.bat`。网页默认自动定位淘宝活动，一键开始会先重新读取任务；普通返回失效时可重开淘宝，再寻找首页活动入口，找不到时尝试搜索活动词。
 分身应用建议手动进入活动后执行；恢复能力取决于驱动暴露的包名及用户上下文，尚未验证分身场景。
 
 ```powershell
@@ -33,6 +33,18 @@ python main.py --port 8766 --no-browser
 
 默认配置见 `configs/double11.json`。`--config 文件路径` 可加载覆盖项，设备信息无需写进公共配置。
 网页设置在当前服务期间保留。暂停时间不计入浏览时长；停止后保留手机现场。
+CLI 仍保留 `--scan` 供开发调试，网页已将识别并入开始按钮。详细路径和数据结构见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+
+## 本地数据与诊断
+
+源码模式写入 `runtime/`，便携模式写入 `%LOCALAPPDATA%\MiaoTask`，可由 `MIAO_DATA_DIR` 覆盖。
+每台设备以驱动类型和实际标识计算哈希键，按本机自然日存储 `daily/YYYY-MM-DD/<device_key>/`。
+当天 `state.json` 保存增量累计统计及不可用任务，`events.jsonl` 保存日志；`failures/` 保存失败 JSON 和可取得的截图。
+重新扫描不会累计同一批执行数，同日重开会延续记录，跨日另建一份并重新判断应用可用性。
+
+控制台状态的 `stats` 表示本轮，`daily.stats` 表示该设备当天累计；`image_sequence` 标记新预览。
+GET `/api/diagnostics` 下载当前设备当天的诊断 ZIP。文字设备标识隐藏，截图不自动脱敏；样例测试必须使用模拟数据，不将真实记录提交仓库。
+同一设备换账号仍共用当天统计，见 [隐私说明](PRIVACY.md)。
 
 ## 测试、构建与发布
 
@@ -43,7 +55,8 @@ python scripts/check_public_files.py
 ```
 
 测试使用模拟设备，不连接真实手机。覆盖任务解析、搜索、原生输入、动态任务、跨应用恢复、有限重试、
-累计奖励、HTTP 校验和公共文件边界。代表性 Android 任务及便携包已实机验证。
+累计奖励、设备日统计与跨日重启、诊断导出、HTTP 校验和公共文件边界。
+前版代表性 Android 浏览、搜索及累计领奖已实机验证；本轮新增路径的验证范围以 [CHANGELOG](../CHANGELOG.md) 为准。
 
 构建器从已提交的干净源码生成全新目录，执行离线 OCR、内置 ADB、本地网页、浏览器请求头、重复启动及退出自检。
 GitHub Actions 可手动构建，版本标签会触发构建并生成 Release 草稿；正式发布可附加经验证的 ZIP 和校验文件。

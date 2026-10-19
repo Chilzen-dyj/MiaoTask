@@ -5,18 +5,31 @@
 使用统一的API操作鸿蒙(HarmonyOS)和安卓(Android)设备。
 """
 import logging
+import re
+from contextlib import nullcontext
+from functools import wraps
 import shlex
 import tempfile
+import threading
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
 logger = logging.getLogger(__name__)
 
 
+def serialized(method):
+    """Keep preview captures and task RPCs on one device from interleaving."""
+    @wraps(method)
+    def call(self, *args, **kwargs):
+        with getattr(self, 'io_lock', None) or nullcontext():
+            return method(self, *args, **kwargs)
+    return call
+
+
 class DeviceAdapter:
     """设备适配器，统一HarmonyOS和Android的UI自动化接口"""
 
-    def __init__(self, device_type, serial=None):
+    def __init__(self, device_type, serial=None, on_status=None):
         """
         初始化设备适配器
 
@@ -26,6 +39,8 @@ class DeviceAdapter:
         """
         self.device_type = device_type
         self.serial = serial
+        self.io_lock = threading.RLock()
+        self.on_status = on_status or logger.info
         self._device = None
         self._last_xml = None  # 缓存uiautomator2的原始XML，避免json2xml重复调用
         self._init_device()
@@ -54,6 +69,8 @@ class DeviceAdapter:
             self._device = Driver(serial=self.serial)
         elif self.device_type == 'uiautomator2':
             import uiautomator2 as u2
+            from modules.adb_transport import prepare_android_connection
+            self.serial = prepare_android_connection(self.serial, on_status=self.on_status)
             # 设置HTTP超时（模块级常量）
             u2.HTTP_TIMEOUT = 20
             if self.serial:
@@ -65,8 +82,22 @@ class DeviceAdapter:
             # 设置默认等待超时
             self._device.settings['wait_timeout'] = 3
             self._device.settings['operation_delay'] = (0.1, 0.1)
+            self.identity_serial = self._android_identity() or self.serial
         else:
             raise ValueError(f"不支持的设备类型: {self.device_type}")
+
+    def _android_identity(self):
+        """Keep USB and Wi-Fi transports of the same handset in one daily record."""
+        for prop in ('ro.serialno', 'ro.boot.serialno'):
+            try:
+                result = self._device.shell(['getprop', prop])
+                value = result.output.strip()
+                if (result.exit_code == 0 and re.fullmatch(r'[A-Za-z0-9._-]{3,128}', value)
+                        and value.lower() not in ('unknown', 'null', 'none')):
+                    return value
+            except Exception:
+                logger.debug('无法读取设备持久标识，使用连接标识', exc_info=True)
+        return None
 
     @property
     def device(self):
@@ -107,10 +138,12 @@ class DeviceAdapter:
             if obj.exists():
                 obj.click()
 
+    @serialized
     def click(self, x, y):
         """点击坐标"""
         self._device.click(x, y)
 
+    @serialized
     def swipe(self, x1, y1, x2, y2, duration=0.5):
         """滑动"""
         if self.device_type == 'hmdriver2':
@@ -119,6 +152,7 @@ class DeviceAdapter:
             # uiautomator2: swipe(fx, fy, tx, ty, duration)
             self._device.swipe(x1, y1, x2, y2, duration=duration)
 
+    @serialized
     def swipe_ext(self, direction, box=None):
         """方向滑动"""
         if box:
@@ -126,6 +160,7 @@ class DeviceAdapter:
         else:
             self._device.swipe_ext(direction)
 
+    @serialized
     def go_back(self):
         """返回"""
         if self.device_type == 'hmdriver2':
@@ -133,6 +168,7 @@ class DeviceAdapter:
         else:
             self._device.press("back")
 
+    @serialized
     def go_home(self):
         """回到主页"""
         if self.device_type == 'hmdriver2':
@@ -140,6 +176,7 @@ class DeviceAdapter:
         else:
             self._device.press("home")
 
+    @serialized
     def input_text(self, text):
         """输入文本"""
         if self.device_type == 'hmdriver2':
@@ -147,19 +184,13 @@ class DeviceAdapter:
         else:
             # The native editable node supports Unicode directly. send_keys /
             # clear_text may install and switch IMEs and then retry broadcasts.
-            from uiautomator2.exceptions import UiObjectNotFoundError
-            try:
-                self._device(focused=True).set_text(text)
-            except UiObjectNotFoundError:
-                # Activity search wraps its input in a wide clickable region;
-                # tapping that region may not focus it. Native set_text also
-                # works on an unfocused input, provided it is unambiguous.
-                edit = self._device(className='android.widget.EditText')
-                if edit.count != 1:
-                    raise
-                logger.info('输入框未暴露焦点，直接填写唯一原生输入框')
-                edit.set_text(text)
+            edit = self._device(className='android.widget.EditText')
+            if edit.count == 1:
+                edit.set_text(text, timeout=.25)
+            else:
+                self._device(className='android.widget.EditText', focused=True).set_text(text, timeout=.25)
 
+    @serialized
     def clear_text(self):
         """清除文本"""
         if self.device_type == 'hmdriver2':
@@ -167,6 +198,7 @@ class DeviceAdapter:
         else:
             self._device(focused=True).set_text('')
 
+    @serialized
     def start_app(self, package_name, activity=None):
         """启动应用"""
         if self.device_type == 'hmdriver2':
@@ -174,6 +206,7 @@ class DeviceAdapter:
         else:
             self._device.app_start(package_name, activity=activity)
 
+    @serialized
     def stop_app(self, package_name):
         """停止应用"""
         if self.device_type == 'hmdriver2':
@@ -181,6 +214,7 @@ class DeviceAdapter:
         else:
             self._device.app_stop(package_name)
 
+    @serialized
     def shell(self, cmd):
         """执行shell命令"""
         if self.device_type == 'hmdriver2':
@@ -190,6 +224,7 @@ class DeviceAdapter:
                 cmd = shlex.split(cmd)
             return self._device.shell(cmd)
 
+    @serialized
     def current_app(self):
         """Return a common package/activity mapping on both drivers."""
         if self.device_type == 'hmdriver2':
@@ -197,6 +232,7 @@ class DeviceAdapter:
             return {'package': package or '', 'activity': activity or ''}
         return self._device.app_current()
 
+    @serialized
     def installed_packages(self):
         """Return installed Android packages, or None when detection is unavailable."""
         if self.device_type != 'uiautomator2':
@@ -207,6 +243,7 @@ class DeviceAdapter:
         return {line.removeprefix('package:').strip() for line in result.output.splitlines()
                 if line.startswith('package:')}
 
+    @serialized
     def resume_app(self, package_name):
         """Bring the existing application task forward without force stopping it."""
         if self.device_type == 'hmdriver2':
@@ -222,6 +259,13 @@ class DeviceAdapter:
                 raise RuntimeError(f'无法找到应用启动入口：{package_name}')
             self._device.app_start(package_name, activity=component.split('/', 1)[1], stop=False)
 
+    @serialized
+    def restart_app(self, package_name):
+        """Cold-start only when bounded task-stack recovery has failed."""
+        self.stop_app(package_name)
+        self.resume_app(package_name)
+
+    @serialized
     def screenshot(self):
         """Return a Pillow image; keep Harmony's temporary file off disk afterwards."""
         if self.device_type == 'uiautomator2':
@@ -233,6 +277,7 @@ class DeviceAdapter:
             with Image.open(path) as image:
                 return image.convert('RGB').copy()
 
+    @serialized
     def dump_hierarchy(self):
         """
         获取UI层级结构，统一返回JSON dict
@@ -244,7 +289,7 @@ class DeviceAdapter:
             return self._device.dump_hierarchy()
         else:
             # uiautomator2 返回XML，缓存原始XML并转为兼容JSON
-            self._last_xml = self._device.dump_hierarchy()
+            self._last_xml = self._device.dump_hierarchy(compressed=True)
             return self._xml_to_json(self._last_xml)
 
     # XML属性名到hmdriver2 JSON key的映射
@@ -294,6 +339,7 @@ class DeviceAdapter:
         else:
             raise NotImplementedError("uiautomator2不支持gesture API，请使用swipe方法")
 
+    @serialized
     def press(self, key):
         """按键"""
         if self.device_type == 'hmdriver2':

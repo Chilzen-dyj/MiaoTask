@@ -130,6 +130,17 @@ class RecognitionTests(unittest.TestCase):
         task = parse_tasks(screen.nodes)[0]
         self.assertEqual(task.kind, 'visit')
 
+    def test_alipay_mini_app_titles_share_actual_installation_evidence(self):
+        for title in ('逛一逛蚂蚁庄园', '逛一逛蚂蚁森林'):
+            screen = task_screen()
+            screen.nodes[3].text = title + '(0/1)'
+            screen.nodes[4].text = '点击去逛 +600'
+            task = parse_tasks(screen.nodes)[0]
+            self.assertEqual(task.target_app, '支付宝')
+            self.assertEqual(task.target_packages, ('com.eg.android.AlipayGphone',))
+        screen.nodes[3].text = '去芭芭农场领水果(0/1)'
+        self.assertFalse(parse_tasks(screen.nodes)[0].target_app)
+
     def test_side_effect_tasks_require_manual_handling(self):
         for title in ['下单购买', '充值话费', '关注店铺', '邀请好友', '答题考试', '下载应用', '收藏商品', '开通会员']:
             screen = task_screen()
@@ -206,6 +217,78 @@ class RunnerTests(unittest.TestCase):
         r.device.resume_app.assert_called_once_with('com.taobao.taobao')
         self.assertEqual(r.origin, 'com.taobao.taobao')
 
+    def navigation_scenario(self):
+        """Model a nested task stack that only a cold start can leave."""
+        r = self.clock_runner()
+        r.config.update(page_timeout=3, return_timeout=5, max_back_steps=2)
+        external = Screen([node('其他应用页面', 60, 300)], 1440, 3200, 'com.example.other')
+        stuck = Screen([node('活动之外的商品页面', 60, 300)], 1440, 3200, r.origin)
+        home = Screen([node('领淘金币', 100, 800, 250)], 1440, 3200, r.origin)
+        activity = Screen([node('赚能量', 1150, 1200, 220)], 1440, 3200, r.origin)
+        panel = task_screen(1)
+        state = {'screen': external}
+        r.read = Mock(side_effect=lambda **kwargs: state['screen'])
+        r.device.resume_app.side_effect = lambda package: state.update(screen=stuck)
+        r.device.restart_app.side_effect = lambda package: state.update(screen=home)
+
+        def click(x, y):
+            if state['screen'] is home and (x, y) == home.nodes[0].center:
+                state['screen'] = activity
+            elif state['screen'] is activity and (x, y) == activity.nodes[0].center:
+                state['screen'] = panel
+        r.device.click.side_effect = click
+        return r, panel
+
+    def test_auto_entry_cold_restarts_nested_stack_then_opens_activity_and_menu(self):
+        r, panel = self.navigation_scenario()
+        self.assertIs(r.ensure_list(auto_open=True), panel)
+        r.device.restart_app.assert_called_once_with('com.taobao.taobao')
+        self.assertEqual(r.device.click.call_count, 2)
+        self.assertLessEqual(r.device.go_back.call_count, 8)
+        self.assertLess(r.control.now(), 30)
+
+    def test_recovery_cold_restarts_after_multilevel_external_jump(self):
+        r, panel = self.navigation_scenario()
+        self.assertIs(r.recover(), panel)
+        r.device.resume_app.assert_called_once_with(r.origin)
+        r.device.restart_app.assert_called_once_with(r.origin)
+        self.assertEqual(r.device.click.call_count, 2)
+        self.assertLess(r.control.now(), 30)
+
+    def test_existing_task_panel_does_not_restart_or_leave_it(self):
+        r = self.clock_runner()
+        panel = task_screen()
+        r.read = Mock(return_value=panel)
+        self.assertIs(r.ensure_list(auto_open=True), panel)
+        r.device.resume_app.assert_not_called()
+        r.device.restart_app.assert_not_called()
+        r.device.go_back.assert_not_called()
+        r.device.click.assert_not_called()
+
+    def test_activity_entry_uses_text_at_different_homepage_positions(self):
+        r = self.clock_runner()
+        for x, y, caption in [(30, 450, '领淘金币'), (900, 900, '领淘金币，抵现金'),
+                               (450, 1500, '领淘金币 按钮')]:
+            entry = node(caption, x, y, 250)
+            screen = Screen([entry], 1440, 3200, r.origin, 'ocr')
+            self.assertIs(r.activity_entry(screen, homepage=True), entry)
+
+    def test_activity_entry_does_not_borrow_product_caption_or_bottom_card(self):
+        r = self.clock_runner()
+        screen = Screen([node('领淘金币商品详情已售100', 50, 500),
+                         node('领淘金币 抵现金', 500, 2600)], 1440, 3200, r.origin)
+        self.assertIsNone(r.activity_entry(screen, homepage=True))
+
+    def test_unrecoverable_auto_entry_is_bounded_and_does_not_relaunch_forever(self):
+        r = self.clock_runner()
+        r.config.update(page_timeout=3, return_timeout=5, max_back_steps=2)
+        r.read = Mock(return_value=Screen([node('商品详情', 40, 400)], 1440, 3200, r.origin))
+        with self.assertRaises(NeedsAttention):
+            r.ensure_list(auto_open=True)
+        r.device.restart_app.assert_called_once_with(r.origin)
+        self.assertLessEqual(r.device.go_back.call_count, 8)
+        self.assertLess(r.control.now(), 30)
+
     def clock_runner(self):
         r = self.runner()
         clock = [0.0]
@@ -248,14 +331,32 @@ class RunnerTests(unittest.TestCase):
         r.device.input_text.assert_called_once_with('手机壳')
         r.device.clear_text.assert_not_called()
 
-    def test_existing_query_is_submitted_without_retyping(self):
+    def test_existing_fixed_query_is_submitted_without_retyping(self):
         r = self.clock_runner()
-        screen, tree = self.search_page('phone')
+        screen, tree = self.search_page('手机壳')
         r.device.dump_hierarchy.return_value = tree
         r.read = Mock(return_value=self.results_page())
         self.assertTrue(r.handle_search(screen))
         r.device.click.assert_called_once_with(1290, 221)
         r.device.input_text.assert_not_called()
+
+    def test_different_query_is_replaced_with_fixed_keyword(self):
+        r = self.clock_runner()
+        screen, tree = self.search_page('phone')
+        r.device.dump_hierarchy.return_value = tree
+        r.read = Mock(return_value=self.results_page())
+        self.assertTrue(r.handle_search(screen))
+        r.device.input_text.assert_called_once_with('手机壳')
+        r.device.click.assert_called_once_with(1290, 221)
+
+    def test_search_keyword_can_be_configured_without_using_history(self):
+        r = self.clock_runner()
+        r.config['task_search_keyword'] = 'keyboard'
+        screen, tree = self.search_page('some old private query')
+        r.device.dump_hierarchy.return_value = tree
+        r.read = Mock(return_value=self.results_page())
+        self.assertTrue(r.handle_search(screen))
+        r.device.input_text.assert_called_once_with('keyboard')
 
     def test_search_relocates_submit_after_input_expands_reward_header(self):
         r = self.clock_runner()
@@ -277,14 +378,14 @@ class RunnerTests(unittest.TestCase):
         r.execute(r.tasks(before)[0], before)
         r.handle_search.assert_called_once_with(landing)
 
-    def test_search_can_use_ascii_when_there_are_no_suggestions(self):
+    def test_search_uses_fixed_keyword_when_there_are_no_suggestions(self):
         r = self.clock_runner()
         screen, tree = self.search_page()
         screen.nodes.pop()
         r.device.dump_hierarchy.return_value = tree
         r.read = Mock(return_value=self.results_page())
         self.assertTrue(r.handle_search(screen))
-        r.device.input_text.assert_called_once_with('a')
+        r.device.input_text.assert_called_once_with('手机壳')
 
     def test_failed_search_submission_is_bounded_and_not_browsed(self):
         r = self.clock_runner()
@@ -292,8 +393,67 @@ class RunnerTests(unittest.TestCase):
         r.device.dump_hierarchy.return_value = tree
         r.read = Mock(return_value=screen)
         self.assertFalse(r.handle_search(screen))
-        r.device.click.assert_called_once_with(1290, 221)
+        self.assertEqual(r.device.click.call_args_list[0].args, (1290, 221))
+        self.assertEqual(r.device.click.call_count, 2)
+        r.device.press.assert_called_once_with('enter')
+        self.assertLessEqual(r.control.now(), r.config['page_timeout'] + 1)
         r.device.swipe.assert_not_called()
+
+    def test_search_second_click_submits_when_first_click_was_ignored(self):
+        r = self.clock_runner()
+        screen, tree = self.search_page('手机壳')
+        r.device.dump_hierarchy.return_value = tree
+        r.read = Mock(side_effect=lambda **kwargs: self.results_page()
+                      if r.device.click.call_count >= 2 else screen)
+        self.assertTrue(r.handle_search(screen))
+        self.assertEqual(r.device.click.call_count, 2)
+        r.device.press.assert_not_called()
+        self.assertLess(r.control.now(), r.config['page_timeout'])
+
+    def test_search_enter_submits_when_both_button_clicks_were_ignored(self):
+        r = self.clock_runner()
+        screen, tree = self.search_page('手机壳')
+        r.device.dump_hierarchy.return_value = tree
+        r.read = Mock(side_effect=lambda **kwargs: self.results_page()
+                      if r.device.press.called else screen)
+        self.assertTrue(r.handle_search(screen))
+        self.assertEqual(r.device.click.call_count, 2)
+        r.device.press.assert_called_once_with('enter')
+        self.assertLess(r.control.now(), r.config['page_timeout'])
+
+    def test_search_can_submit_with_enter_when_no_safe_button_exists(self):
+        r = self.clock_runner()
+        screen, tree = self.search_page('手机壳')
+        tree['children'] = tree['children'][:1]
+        screen.nodes = [n for n in screen.nodes if n.center[0] < 1100]
+        r.device.dump_hierarchy.return_value = tree
+        r.read = Mock(side_effect=lambda **kwargs: self.results_page()
+                      if r.device.press.called else screen)
+        self.assertTrue(r.handle_search(screen))
+        r.device.click.assert_not_called()
+        r.device.press.assert_called_once_with('enter')
+
+    def test_search_rejects_identical_labels_in_input_and_lower_page_buttons(self):
+        r = self.clock_runner()
+        screen, tree = self.search_page('手机壳')
+        tree['children'] += [dict(type='android.widget.Button', text='搜索',
+                                  bounds='[1050,1000][1430,1100]'),
+                             dict(type='android.widget.Button', text='搜索',
+                                  bounds='[100,150][1000,290]')]
+        r.device.dump_hierarchy.return_value = tree
+        r.read = Mock(return_value=self.results_page())
+        self.assertTrue(r.handle_search(screen))
+        r.device.click.assert_called_once_with(1290, 221)
+
+    def test_search_does_not_type_or_submit_without_a_confirmed_input(self):
+        r = self.clock_runner()
+        screen, tree = self.search_page()
+        tree['children'] = tree['children'][1:]
+        r.device.dump_hierarchy.return_value = tree
+        self.assertFalse(r.handle_search(screen))
+        r.device.input_text.assert_not_called()
+        r.device.click.assert_not_called()
+        r.device.press.assert_not_called()
 
     def test_missing_apps_are_tried_once_then_skipped_across_runs(self):
         r = self.clock_runner()
@@ -556,6 +716,20 @@ class RunnerTests(unittest.TestCase):
 
 
 class NativeInputTests(unittest.TestCase):
+    def test_android_identity_uses_hardware_identity_and_ignores_unknown_property(self):
+        adapter = DeviceAdapter.__new__(DeviceAdapter)
+        adapter._device = Mock()
+        adapter._device.shell.side_effect = [Mock(exit_code=0, output='unknown\n'),
+                                             Mock(exit_code=0, output='test-hardware-id\n')]
+        self.assertEqual(adapter._android_identity(), 'test-hardware-id')
+        self.assertEqual(adapter._device.shell.call_count, 2)
+
+    def test_android_identity_falls_back_when_properties_are_unavailable(self):
+        adapter = DeviceAdapter.__new__(DeviceAdapter)
+        adapter._device = Mock()
+        adapter._device.shell.side_effect = RuntimeError('unavailable')
+        self.assertIsNone(adapter._android_identity())
+
     def test_inaccessible_focus_uses_unique_native_edit_without_ime_changes(self):
         from uiautomator2.exceptions import UiObjectNotFoundError
         adapter = DeviceAdapter.__new__(DeviceAdapter)
@@ -565,7 +739,8 @@ class NativeInputTests(unittest.TestCase):
         focused.set_text.side_effect = UiObjectNotFoundError(-32001, 'missing focus')
         adapter._device = Mock(side_effect=lambda **kwargs: focused if 'focused' in kwargs else edit)
         adapter.input_text('手机壳')
-        edit.set_text.assert_called_once_with('手机壳')
+        edit.set_text.assert_called_once_with('手机壳', timeout=.25)
+        focused.set_text.assert_not_called()
         adapter._device.shell.assert_not_called()
         adapter._device.set_input_ime.assert_not_called()
         adapter._device.send_keys.assert_not_called()
@@ -588,8 +763,8 @@ class NativeInputTests(unittest.TestCase):
         adapter.device_type = 'uiautomator2'
         adapter._device = Mock()
         adapter.input_text('手机壳')
-        adapter._device.assert_called_with(focused=True)
-        adapter._device.return_value.set_text.assert_called_once_with('手机壳')
+        adapter._device.assert_called_with(className='android.widget.EditText', focused=True)
+        adapter._device.return_value.set_text.assert_called_once_with('手机壳', timeout=.25)
         adapter.clear_text()
         self.assertEqual(adapter._device.return_value.set_text.call_args.args, ('',))
         adapter._device.send_keys.assert_not_called()
