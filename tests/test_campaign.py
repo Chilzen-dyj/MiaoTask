@@ -265,6 +265,78 @@ class RunnerTests(unittest.TestCase):
         r.device.go_back.assert_not_called()
         r.device.click.assert_not_called()
 
+    def test_cold_launch_waits_for_splash_then_icon_menu_and_real_task_rows(self):
+        r = self.clock_runner()
+        r.config.update(page_timeout=3, return_timeout=5)
+        launcher = Screen([], 1440, 3200, 'com.example.launcher', 'ocr')
+        splash = Screen([node('天猫双11', 500, 650), node('正式开卖', 400, 1200),
+                         node('阿里云提供计算服务IPv6', 400, 2980)], 1440, 3200, r.origin, 'ocr')
+        home = Screen([node('领淘金币', 600, 640, 240), node('购物车', 1000, 3020, 200),
+                       node('我的淘宝', 1220, 3020, 200)], 1440, 3200, r.origin, 'ocr')
+        loading = Screen([node('正在加载', 600, 300)], 1440, 3200, r.origin, 'ocr')
+        # The menu is temporarily split by OCR and the title uses Roman numerals.
+        activity = Screen([node('淘金币双Ⅱ狂享20亿', 60, 160), node('赚能', 1200, 1230),
+                           node('量', 1250, 1270)], 1440, 3200, r.origin, 'ocr')
+        native = Screen([node('赚能量', 1150, 1150, 280, 180)], 1440, 3200, r.origin)
+        skeleton = Screen([node('做任务赚能量', 500, 630)], 1440, 3200, r.origin, 'ocr')
+        panel = task_screen(1)
+        state = dict(stage='launcher', changed=0)
+        def read(**kwargs):
+            r.control.wait(.5)
+            elapsed = r.control.now() - state['changed']
+            if state['stage'] == 'launcher': return launcher
+            if state['stage'] == 'splash': return splash if elapsed < 2 else home
+            if state['stage'] == 'activity':
+                if elapsed < 1: return loading
+                return activity if kwargs.get('force_ocr') else native
+            return skeleton if elapsed < 4 else panel
+        r.read = Mock(side_effect=read)
+        r.device.resume_app.side_effect = lambda package: state.update(stage='splash', changed=r.control.now())
+        def click(x, y):
+            if (x, y) == home.nodes[0].center:
+                state.update(stage='activity', changed=r.control.now())
+            elif (x, y) == native.nodes[0].center:
+                state.update(stage='panel', changed=r.control.now())
+            else:
+                self.fail('Clicked something other than the entry icon or energy button')
+        r.device.click.side_effect = click
+        self.assertIs(r.ensure_list(auto_open=True), panel)
+        self.assertEqual(r.device.click.call_count, 2)
+        r.device.go_back.assert_not_called()
+        r.device.swipe.assert_not_called()
+        r.device.restart_app.assert_not_called()
+
+    def test_panel_heading_is_never_reused_as_an_entry_button(self):
+        r = self.clock_runner()
+        skeleton = Screen([node('做任务赚能量', 500, 630)], 1440, 3200, r.origin, 'ocr')
+        self.assertIsNone(r.task_panel_entry(skeleton))
+        panel = task_screen()
+        r.read = Mock(return_value=panel)
+        self.assertIs(r.enter_task_panel(skeleton), panel)
+        r.device.click.assert_not_called()
+
+    def test_reward_header_alone_is_not_a_loaded_task_list(self):
+        r = self.clock_runner()
+        skeleton = Screen([node('做任务赚能量', 500, 630), node('累计任务奖励', 60, 800),
+                           node('已领取', 900, 810, 250)], 1440, 3200, r.origin, 'ocr')
+        self.assertTrue(is_task_list(skeleton.nodes))
+        self.assertFalse(r._accept_list(skeleton))
+        r.read = Mock(return_value=task_screen())
+        self.assertTrue(r._accept_list(r.enter_task_panel(skeleton)))
+        r.device.click.assert_not_called()
+
+    def test_large_aggregate_menu_label_does_not_hide_actual_native_button(self):
+        r = self.clock_runner()
+        screen = Screen([node('赚能量', 0, 0, 1440, 3200),
+                         node('赚能量', 1150, 1150, 280, 180)], 1440, 3200, r.origin)
+        self.assertIs(r.task_panel_entry(screen), screen.nodes[1])
+
+    def test_activity_title_with_ocr_roman_numerals_is_still_an_activity(self):
+        r = self.clock_runner()
+        for text in ('淘金币双Ⅱ狂享20亿', '淘金币双II狂享20亿', '淘金币双11狂享20亿'):
+            screen = Screen([node(text, 60, 160)], 1440, 3200, r.origin, 'ocr')
+            self.assertTrue(r.activity_landing(screen))
+
     def test_last_observation_is_accepted_after_navigation_deadline(self):
         r = self.clock_runner()
         r.config.update(page_timeout=3, return_timeout=5)
@@ -885,6 +957,25 @@ class RunnerTests(unittest.TestCase):
 
 
 class NativeInputTests(unittest.TestCase):
+    def test_capture_disconnect_uses_one_direct_adb_fallback(self):
+        adapter = DeviceAdapter.__new__(DeviceAdapter)
+        adapter.device_type = 'uiautomator2'
+        image = object()
+        adapter._device = Mock()
+        adapter._device.screenshot.side_effect = [ConnectionResetError('RPC disconnected'), image]
+        self.assertIs(adapter.screenshot(), image)
+        self.assertEqual(adapter._device.screenshot.call_count, 2)
+        adapter._device.screenshot.assert_called_with(display_id=0)
+
+    def test_capture_failure_is_bounded_if_direct_adb_is_also_unavailable(self):
+        adapter = DeviceAdapter.__new__(DeviceAdapter)
+        adapter.device_type = 'uiautomator2'
+        adapter._device = Mock()
+        adapter._device.screenshot.side_effect = [ConnectionResetError('RPC disconnected'), OSError('USB disconnected')]
+        with self.assertRaisesRegex(OSError, 'USB disconnected'):
+            adapter.screenshot()
+        self.assertEqual(adapter._device.screenshot.call_count, 2)
+
     def test_android_identity_uses_hardware_identity_and_ignores_unknown_property(self):
         adapter = DeviceAdapter.__new__(DeviceAdapter)
         adapter._device = Mock()

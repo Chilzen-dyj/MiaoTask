@@ -269,7 +269,14 @@ class DeviceAdapter:
     def screenshot(self):
         """Return a Pillow image; keep Harmony's temporary file off disk afterwards."""
         if self.device_type == 'uiautomator2':
-            return self._device.screenshot()
+            try:
+                return self._device.screenshot()
+            except OSError:
+                # Cold launch can momentarily close the automation RPC socket.
+                # Explicit primary display uses u2's public direct-ADB capture,
+                # returning a fresh frame without another app/server restart.
+                logger.debug('截图服务暂时不可用，改用 ADB 截图', exc_info=True)
+                return self._device.screenshot(display_id=0)
         from PIL import Image
         with tempfile.TemporaryDirectory(prefix='miao-screen-') as folder:
             path = str(Path(folder) / 'screen.png')

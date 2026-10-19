@@ -298,21 +298,41 @@ class CampaignRunner:
 
     def task_panel_entry(self, screen):
         for label in self.config['task_entry_labels']:
-            target = screen.find(label, exact=True)
-            if (target and 0 < target.bounds[2] - target.bounds[0] < screen.width * .7
-                    and 0 < target.bounds[3] - target.bounds[1] < screen.height * .2):
-                return target
+            # This is the opened sheet's heading, never a button on this campaign.
+            if normalize(label) == '做任务赚能量':
+                continue
+            for target in screen.nodes:
+                if (normalize(target.text) == normalize(label)
+                        and 0 < target.bounds[2] - target.bounds[0] < screen.width * .7
+                        and 0 < target.bounds[3] - target.bounds[1] < screen.height * .2):
+                    return target
         return None
+
+    @staticmethod
+    def task_panel_visible(screen):
+        return any(normalize(n.text) == '做任务赚能量'
+                   and 0 < n.bounds[3] - n.bounds[1] < screen.height * .15
+                   and n.center[1] < screen.height * .7 for n in screen.nodes)
+
+    @staticmethod
+    def homepage_visible(screen):
+        return all(any(normalize(n.text) == label and n.center[1] > screen.height * .8
+                       for n in screen.nodes) for label in ('我的淘宝', '购物车'))
+
+    @staticmethod
+    def launch_screen(screen):
+        return bool(screen.find(r'阿里云提供计算服务') or
+                    (screen.find(r'^天猫双') and screen.find(r'^正式开卖$')))
 
     @staticmethod
     def activity_landing(screen):
         return any(0 < n.bounds[3] - n.bounds[1] < screen.height * .15
                    and ((n.center[1] < screen.height * .18
-                         and re.search(r'^淘金币双11|^淘金币首页$', normalize(n.text)))
+                         and re.search(r'^淘金币双11|^淘金币双.{0,4}狂享20亿|^淘金币首页$', normalize(n.text)))
                         or (n.center[1] < screen.height * .5 and normalize(n.text) == '升级赛车拿钱'))
                    for n in screen.nodes)
 
-    def enter_task_panel(self, screen):
+    def enter_task_panel(self, screen, expected_activity=False):
         """Confirm the painted panel; retry a missed menu tap at most twice.
 
         A late-arriving activity page gets its own bounded rendering window.
@@ -324,30 +344,43 @@ class CampaignRunner:
         last_tap = self.control.now() - 10
         native_reads = 0
         last_native = self.control.now() - 10
+        heading_seen = False
         while True:
             self.guard(screen)
             if self._accept_list(screen):
                 return screen
             if not screen.package.startswith('com.taobao.taobao'):
                 return screen
+            panel_loading = self.task_panel_visible(screen) or bool(screen.find('累计任务奖励', exact=True))
+            if panel_loading and not heading_seen:
+                heading_seen = True
+                # The sheet opens first, then requests the task rows. This is a
+                # successful forward transition, deserving its own load window.
+                deadline = max(deadline, self.control.now() + self.config['page_timeout'])
+                self.update(message='已打开做任务赚能量，等待任务列表加载')
             if self.control.now() >= deadline:
                 return screen
-            panel_loading = bool(screen.find('累计任务奖励', exact=True))
             target = None if panel_loading else self.task_panel_entry(screen)
-            if (not target and native_reads < 3 and self.activity_landing(screen)
+            if (screen.source == 'ocr' and native_reads < 3
+                    and (target or self.activity_landing(screen) or expected_activity)
                     and not panel_loading and self.control.now() - last_native >= 1.2):
                 native_reads += 1
                 last_native = self.control.now()
                 native = self.read()
                 self.guard(native)
                 if native.package == screen.package:
-                    target = self.task_panel_entry(native)
+                    if self.task_panel_visible(native):
+                        # A sheet may appear during the hierarchy RPC. Confirm
+                        # the actual foreground again instead of tapping old OCR.
+                        screen = self.read(force_ocr=bool(self.config['ocr']))
+                        continue
+                    target = self.task_panel_entry(native) or target
             if target and attempts < 3 and self.control.now() - last_tap >= 1.2:
                 self.update(message='打开赚能量菜单，确认任务列表')
                 self.click(target)
                 attempts += 1
                 last_tap = self.control.now()
-            elif not (target or self.activity_landing(screen) or screen.find(r'做任务赚|累计任务奖励')):
+            elif not (target or self.activity_landing(screen) or panel_loading or expected_activity or attempts):
                 return screen
             self.control.wait(.35)
             screen = self.read(force_ocr=bool(self.config['ocr']))
@@ -404,7 +437,9 @@ class CampaignRunner:
         return None
 
     def _accept_list(self, screen):
-        if is_task_list(screen.nodes) and screen.package.startswith('com.taobao.taobao'):
+        if (self.task_panel_visible(screen) and is_task_list(screen.nodes)
+                and parse_tasks(screen.nodes, screen.width, screen.height)
+                and screen.package.startswith('com.taobao.taobao')):
             self.origin = screen.package
             return True
         return False
@@ -427,14 +462,17 @@ class CampaignRunner:
         searched = False
         home_reset = False
         official_clicks = 0
+        awaiting_activity = False
+        launch_pending = False
         while True:
             self.guard(screen)
             if self._accept_list(screen):
                 return screen
             # Process the last observation even if a slow OCR/RPC crossed the
             # navigation deadline. An arrived activity can still open its menu.
-            if screen.package == package and (self.task_panel_entry(screen) or self.activity_landing(screen)):
-                screen = self.enter_task_panel(screen)
+            if screen.package == package and (awaiting_activity or self.task_panel_entry(screen)
+                                             or self.activity_landing(screen) or self.task_panel_visible(screen)):
+                screen = self.enter_task_panel(screen, expected_activity=awaiting_activity)
                 if self._accept_list(screen):
                     return screen
                 if not allow_restart or restarted:
@@ -445,6 +483,7 @@ class CampaignRunner:
                 back_count = resumes = 0
                 clicked.clear()
                 official_clicks = 0
+                awaiting_activity, launch_pending = False, True
                 last_action = self.control.now()
                 deadline = last_action + budget
                 screen = self.read(force_ocr=bool(self.config['ocr']))
@@ -453,6 +492,7 @@ class CampaignRunner:
             if official and official_clicks < 2 and ('activity', official.bounds) not in clicked:
                 self.click(official)
                 official_clicks += 1
+                awaiting_activity = True
                 clicked.add(('activity', official.bounds))
                 last_action = self.control.now()
                 deadline = max(deadline, last_action + self.config['page_timeout'])
@@ -464,8 +504,17 @@ class CampaignRunner:
             # Only use native homepage controls after the painted page confirms
             # its bottom navigation. Icon labels such as 首页/搜索栏 are invisible
             # to OCR; a task overlay must never expose its background as an entry.
-            home_visible = bool(screen.find('我的淘宝', exact=True) and screen.find('购物车', exact=True)
-                                and screen.find('视频', exact=True))
+            home_visible = self.homepage_visible(screen)
+            if (home_visible or self.activity_entry(screen, homepage=home_visible)
+                    or self.control.now() - last_action >= self.config['page_timeout']):
+                launch_pending = False
+            if (screen.package == package and
+                    (self.launch_screen(screen) or (launch_pending and not home_visible
+                     and self.control.now() - last_action < self.config['page_timeout']))):
+                self.update(message='等待淘宝启动完成，准备点击首页领淘金币')
+                self.control.wait(.35)
+                screen = self.read(force_ocr=bool(self.config['ocr']))
+                continue
             if home_visible:
                 native = self.read()
                 if native.package == package:
@@ -477,6 +526,7 @@ class CampaignRunner:
                 if resumes < 2:
                     self.device.resume_app(package)
                     resumes += 1
+                    launch_pending = True
                     last_action = self.control.now()
                     self.control.wait(.8)
                 elif allow_restart and not restarted:
@@ -485,6 +535,7 @@ class CampaignRunner:
                     restarted, back_count = True, 0
                     clicked.clear()
                     official_clicks = 0
+                    awaiting_activity, launch_pending = False, True
                     last_action = self.control.now()
                 else:
                     break
@@ -497,6 +548,7 @@ class CampaignRunner:
                     clicked.add(key)
                 if action:
                     self.click(action)
+                    awaiting_activity = True
                     last_action = self.control.now()
                 elif self.control.now() - last_action < .7:
                     pass
@@ -512,6 +564,7 @@ class CampaignRunner:
                             restarted, back_count = True, 0
                             clicked.clear()
                             official_clicks = 0
+                            awaiting_activity, launch_pending = False, True
                             last_action = self.control.now()
                         else:
                             break
@@ -532,6 +585,7 @@ class CampaignRunner:
                     resumes = 0
                     clicked.clear()
                     official_clicks = 0
+                    awaiting_activity, launch_pending = False, True
                     last_action = self.control.now()
                 elif restarted and back_count < self.config['max_back_steps']:
                     # A homepage popup or a restored deep page can survive launch.
@@ -544,6 +598,7 @@ class CampaignRunner:
                     restarted, back_count = True, 0
                     clicked.clear()
                     official_clicks = 0
+                    awaiting_activity, launch_pending = False, True
                     last_action = self.control.now()
                 elif self.control.now() - last_action > self.config['page_timeout']:
                     break
@@ -567,7 +622,7 @@ class CampaignRunner:
             return screen
         if auto_open:
             return self._navigate_list(screen, allow_restart=True)
-        if self.task_panel_entry(screen) or self.activity_landing(screen):
+        if self.task_panel_entry(screen) or self.activity_landing(screen) or self.task_panel_visible(screen):
             screen = self.enter_task_panel(screen)
             if self._accept_list(screen):
                 return screen
