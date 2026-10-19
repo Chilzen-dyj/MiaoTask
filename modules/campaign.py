@@ -66,7 +66,10 @@ class Stopped(Exception):
 
 
 class NeedsAttention(Exception):
-    pass
+    def __init__(self, message, *, kind='attention', evidence_saved=False):
+        super().__init__(message)
+        self.kind = kind
+        self.evidence_saved = evidence_saved
 
 
 class TaskUnavailable(Exception):
@@ -139,6 +142,7 @@ class CampaignRunner:
         self.on_failure = on_failure
         self._active_task = None
         self._phase = 'locating'
+        self._task_restart_used = False
 
     def report_failure(self, reason, task=None, phase=None):
         """Capture evidence at the failing page, before recovery changes it."""
@@ -147,8 +151,10 @@ class CampaignRunner:
                 self.on_failure(reason=reason, task=(task or self._active_task).to_dict()
                                 if (task or self._active_task) else None,
                                 phase=phase or self._phase)
+                return True
             except Exception:
                 logger.warning('保存失败现场时发生异常', exc_info=True)
+        return False
 
     @staticmethod
     def unavailable_key(task):
@@ -280,27 +286,86 @@ class CampaignRunner:
 
     def guard(self, screen):
         text = normalize(screen.text)
-        if re.search(r'滑块|拖动.{0,8}验证|安全验证|请完成验证|验证码|人机验证|操作过于频繁|账号存在风险|访问被拒绝', text):
-            reason = '页面要求安全验证，请在手机处理后从当前页面重新开始'
-            self.report_failure(reason, phase='security')
-            raise NeedsAttention(reason)
+        if re.search(r'滑块|拖动.{0,8}验证|安全验证|请完成验证|验证码|人机验证|操作过于频繁|账号存在风险|访问被拒绝|'
+                     r'将满足描述的所有图片拖放到指定区域', text):
+            reason = '页面要求安全验证，自动操作已停止；请在手机上本人处理，完成后点击开始自动执行'
+            saved = self.report_failure(reason, phase='security')
+            raise NeedsAttention(reason, kind='security', evidence_saved=saved)
         if re.search(r'短信登录|验证码登录|登录即同意|请先登录|立即登录|授权登录|确认付款|支付密码|确认支付', text):
             reason = '页面要求登录、授权或支付，请在手机处理后从当前页面重新开始'
-            self.report_failure(reason, phase='attention')
-            raise NeedsAttention(reason)
+            saved = self.report_failure(reason, phase='attention')
+            raise NeedsAttention(reason, evidence_saved=saved)
+
+    def task_panel_entry(self, screen):
+        for label in self.config['task_entry_labels']:
+            target = screen.find(label, exact=True)
+            if (target and 0 < target.bounds[2] - target.bounds[0] < screen.width * .7
+                    and 0 < target.bounds[3] - target.bounds[1] < screen.height * .2):
+                return target
+        return None
+
+    @staticmethod
+    def activity_landing(screen):
+        return any(0 < n.bounds[3] - n.bounds[1] < screen.height * .15
+                   and ((n.center[1] < screen.height * .18
+                         and re.search(r'^淘金币双11|^淘金币首页$', normalize(n.text)))
+                        or (n.center[1] < screen.height * .5 and normalize(n.text) == '升级赛车拿钱'))
+                   for n in screen.nodes)
+
+    def enter_task_panel(self, screen):
+        """Confirm the painted panel; retry a missed menu tap at most twice.
+
+        A late-arriving activity page gets its own bounded rendering window.
+        Native controls supplement a missing OCR label only on that visible page.
+        Never trust background task rows from an accessibility tree as success.
+        """
+        deadline = self.control.now() + self.config['page_timeout']
+        attempts = 0
+        last_tap = self.control.now() - 10
+        native_reads = 0
+        last_native = self.control.now() - 10
+        while True:
+            self.guard(screen)
+            if self._accept_list(screen):
+                return screen
+            if not screen.package.startswith('com.taobao.taobao'):
+                return screen
+            if self.control.now() >= deadline:
+                return screen
+            panel_loading = bool(screen.find('累计任务奖励', exact=True))
+            target = None if panel_loading else self.task_panel_entry(screen)
+            if (not target and native_reads < 3 and self.activity_landing(screen)
+                    and not panel_loading and self.control.now() - last_native >= 1.2):
+                native_reads += 1
+                last_native = self.control.now()
+                native = self.read()
+                self.guard(native)
+                if native.package == screen.package:
+                    target = self.task_panel_entry(native)
+            if target and attempts < 3 and self.control.now() - last_tap >= 1.2:
+                self.update(message='打开赚能量菜单，确认任务列表')
+                self.click(target)
+                attempts += 1
+                last_tap = self.control.now()
+            elif not (target or self.activity_landing(screen) or screen.find(r'做任务赚|累计任务奖励')):
+                return screen
+            self.control.wait(.35)
+            screen = self.read(force_ocr=bool(self.config['ocr']))
 
     def open_task_panel(self, screen):
         if is_task_list(screen.nodes):
             return True
-        for label in self.config['task_entry_labels']:
-            node = screen.find(label, exact=True)
-            if node:
-                self.click(node)
-                return True
+        node = self.task_panel_entry(screen)
+        if node:
+            self.click(node)
+            return True
         return False
 
     def activity_entry(self, screen, homepage=False):
         """Locate entry words in controls/OCR, independent of icon coordinates."""
+        official = self.official_activity_entry(screen)
+        if official:
+            return official
         for label in self.config['entry_labels']:
             text = normalize(label)
             candidates = [n for n in screen.nodes if 0 < n.bounds[2] - n.bounds[0]
@@ -319,11 +384,35 @@ class CampaignRunner:
                     return min(matches, key=lambda n: (len(normalize(n.text)), n.bounds[1]))
         return None
 
+    @staticmethod
+    def official_activity_entry(screen):
+        # A search result contains TWO exact 淘金币 labels: the search field and
+        # the official card. Enter the card's aligned right-hand action instead
+        # of reopening the search field or a product advertising an entry.
+        descriptions = [n for n in screen.nodes if re.search(r'双11狂享20亿', normalize(n.text))
+                        and n.center[1] < screen.height * .35]
+        for description in descriptions:
+            title = any(normalize(n.text) == '淘金币' and n.center[0] < screen.width * .6
+                        and 0 < description.center[1] - n.center[1] < screen.height * .08
+                        for n in screen.nodes)
+            if title:
+                action = next((n for n in screen.nodes if re.fullmatch(r'进入[>›》]?', normalize(n.text))
+                               and n.center[0] > screen.width * .65
+                               and abs(n.center[1] - description.center[1]) < screen.height * .06), None)
+                if action:
+                    return action
+        return None
+
     def _accept_list(self, screen):
         if is_task_list(screen.nodes) and screen.package.startswith('com.taobao.taobao'):
             self.origin = screen.package
             return True
         return False
+
+    def _restart_taobao(self, package):
+        # Count the attempt before issuing RPCs, including failed cold starts.
+        self._task_restart_used = True
+        self.device.restart_app(package)
 
     def _navigate_list(self, screen, *, allow_restart, recovering=False):
         """One bounded navigation budget, including at most one cold restart."""
@@ -332,15 +421,46 @@ class CampaignRunner:
         budget = self.config['return_timeout'] + self.config['page_timeout'] * 2
         deadline = self.control.now() + budget
         back_count = resumes = 0
-        restarted = False
+        restarted = self._task_restart_used
         last_action = self.control.now() - 10
         clicked = set()
         searched = False
         home_reset = False
-        while self.control.now() < deadline:
+        official_clicks = 0
+        while True:
             self.guard(screen)
             if self._accept_list(screen):
                 return screen
+            # Process the last observation even if a slow OCR/RPC crossed the
+            # navigation deadline. An arrived activity can still open its menu.
+            if screen.package == package and (self.task_panel_entry(screen) or self.activity_landing(screen)):
+                screen = self.enter_task_panel(screen)
+                if self._accept_list(screen):
+                    return screen
+                if not allow_restart or restarted:
+                    break
+                self.update(message='任务菜单未打开，关闭并重开淘宝后重新读取')
+                self._restart_taobao(package)
+                restarted = True
+                back_count = resumes = 0
+                clicked.clear()
+                official_clicks = 0
+                last_action = self.control.now()
+                deadline = last_action + budget
+                screen = self.read(force_ocr=bool(self.config['ocr']))
+                continue
+            official = self.official_activity_entry(screen) if screen.package == package else None
+            if official and official_clicks < 2 and ('activity', official.bounds) not in clicked:
+                self.click(official)
+                official_clicks += 1
+                clicked.add(('activity', official.bounds))
+                last_action = self.control.now()
+                deadline = max(deadline, last_action + self.config['page_timeout'])
+                self.control.wait(.35)
+                screen = self.read(force_ocr=bool(self.config['ocr']))
+                continue
+            if self.control.now() >= deadline:
+                break
             # Only use native homepage controls after the painted page confirms
             # its bottom navigation. Icon labels such as 首页/搜索栏 are invisible
             # to OCR; a task overlay must never expose its background as an entry.
@@ -361,28 +481,20 @@ class CampaignRunner:
                     self.control.wait(.8)
                 elif allow_restart and not restarted:
                     self.update(message='跳转层级过深，重启淘宝并重新进入活动')
-                    self.device.restart_app(package)
+                    self._restart_taobao(package)
                     restarted, back_count = True, 0
                     clicked.clear()
+                    official_clicks = 0
                     last_action = self.control.now()
                 else:
                     break
             elif ready:
                 action = None
-                # Include page identity so the same label on a later page is usable.
-                for label in self.config['task_entry_labels']:
-                    target = screen.find(label, exact=True)
-                    key = (label, target.bounds if target else None)
-                    if target and key not in clicked:
-                        action = target
-                        clicked.add(key)
-                        break
-                if action is None:
-                    target = self.activity_entry(screen, homepage=home_visible)
-                    key = ('activity', target.bounds if target else None)
-                    if target and key not in clicked:
-                        action = target
-                        clicked.add(key)
+                target = self.activity_entry(screen, homepage=home_visible)
+                key = ('activity', target.bounds if target else None)
+                if target and key not in clicked:
+                    action = target
+                    clicked.add(key)
                 if action:
                     self.click(action)
                     last_action = self.control.now()
@@ -396,9 +508,10 @@ class CampaignRunner:
                     # Wait for the panel rows instead of dismissing the loading panel.
                     if self.control.now() - last_action > self.config['page_timeout']:
                         if allow_restart and not restarted:
-                            self.device.restart_app(package)
+                            self._restart_taobao(package)
                             restarted, back_count = True, 0
                             clicked.clear()
+                            official_clicks = 0
                             last_action = self.control.now()
                         else:
                             break
@@ -414,10 +527,11 @@ class CampaignRunner:
                     last_action = self.control.now()
                 elif allow_restart and not restarted:
                     self.update(message='重新打开淘宝，从首页进入活动任务')
-                    self.device.restart_app(package)
+                    self._restart_taobao(package)
                     restarted, back_count = True, 0
                     resumes = 0
                     clicked.clear()
+                    official_clicks = 0
                     last_action = self.control.now()
                 elif restarted and back_count < self.config['max_back_steps']:
                     # A homepage popup or a restored deep page can survive launch.
@@ -426,17 +540,24 @@ class CampaignRunner:
                     last_action = self.control.now()
             elif not ready and self.control.now() - last_action > 5:
                 if allow_restart and not restarted:
-                    self.device.restart_app(package)
+                    self._restart_taobao(package)
                     restarted, back_count = True, 0
                     clicked.clear()
+                    official_clicks = 0
                     last_action = self.control.now()
                 elif self.control.now() - last_action > self.config['page_timeout']:
                     break
             self.control.wait(.35)
             screen = self.read(force_ocr=bool(self.config['ocr']))
+        if allow_restart and not self._task_restart_used:
+            self.update(message='导航异常，关闭并重开淘宝后重新读取任务列表')
+            self._restart_taobao(package)
+            screen = self.read(force_ocr=bool(self.config['ocr']))
+            return self._navigate_list(screen, allow_restart=False, recovering=recovering)
         reason = ('未能自动恢复淘宝活动任务列表' if recovering else '未能自动进入淘宝活动任务列表')
-        self.report_failure(reason, phase='returning' if recovering else 'locating')
-        raise NeedsAttention(reason + '，已保存现场；请检查活动入口是否变化后重试')
+        reason += '，已保存现场；请检查活动入口是否变化后重试'
+        saved = self.report_failure(reason, phase='returning' if recovering else 'locating')
+        raise NeedsAttention(reason, kind='navigation', evidence_saved=saved)
 
     def ensure_list(self, auto_open=False):
         self.update('locating', message='确认当前页面并进入活动任务列表')
@@ -446,6 +567,10 @@ class CampaignRunner:
             return screen
         if auto_open:
             return self._navigate_list(screen, allow_restart=True)
+        if self.task_panel_entry(screen) or self.activity_landing(screen):
+            screen = self.enter_task_panel(screen)
+            if self._accept_list(screen):
+                return screen
         # The advanced current-page mode never launches/restarts an application.
         deadline = self.control.now() + self.config['page_timeout']
         clicked = False
@@ -457,12 +582,28 @@ class CampaignRunner:
             self.guard(screen)
             if self._accept_list(screen):
                 return screen
-        self.report_failure('当前页面未找到活动任务列表', phase='locating')
-        raise NeedsAttention('未识别到任务列表，请使用自动进入活动，或先在手机打开赚能量任务列表')
+        reason = '未识别到任务列表，请使用自动进入活动，或先在手机打开赚能量任务列表'
+        saved = self.report_failure(reason, phase='locating')
+        raise NeedsAttention(reason, evidence_saved=saved)
 
-    def recover(self):
+    def recover(self, cold_start=False):
         self.update('returning', message='自动恢复淘宝活动任务列表')
-        screen = self.read(force_ocr=bool(self.config['ocr']))
+        try:
+            screen = self.read(force_ocr=bool(self.config['ocr']))
+        except (Stopped, NeedsAttention):
+            raise
+        except Exception:
+            if not cold_start or self._task_restart_used:
+                raise
+            screen = None
+        if screen is not None:
+            self.guard(screen)
+        if cold_start and not self._task_restart_used:
+            package = self.origin or ('com.taobao.taobao4hmos' if self.device.device_type == 'hmdriver2'
+                                      else 'com.taobao.taobao')
+            self.update(message='页面异常，关闭并重开淘宝，重新读取任务列表')
+            self._restart_taobao(package)
+            screen = self.read(force_ocr=bool(self.config['ocr']))
         return self._navigate_list(screen, allow_restart=True, recovering=True)
 
     def browse_swipe(self, screen, reverse=False):
@@ -763,7 +904,15 @@ class CampaignRunner:
 
     def run(self, auto_open=False):
         self.started = time.monotonic()
-        screen = self.ensure_list(auto_open)
+        try:
+            screen = self.ensure_list(auto_open)
+        except (Stopped, NeedsAttention):
+            raise
+        except Exception:
+            if not auto_open or self._task_restart_used:
+                raise
+            self.report_failure('初始页面读取异常', phase='locating')
+            screen = self.recover(cold_start=True)
         seen_pages = set()
         scrolls, total_attempts = 0, 0
         while total_attempts < self.config['max_tasks']:
@@ -795,6 +944,7 @@ class CampaignRunner:
                 self.update(tasks=list(self.records.values()))
                 before = screen
                 disabled_reason = ''
+                self._task_restart_used = False
                 try:
                     after, explicit, cross = self.execute(task, before)
                     success = self.verify(task, before, after, explicit)
@@ -819,13 +969,19 @@ class CampaignRunner:
                     self.unavailable_tasks[self.unavailable_key(task)] = disabled_reason
                     screen = self.recover()
                     success = False
-                except (Stopped, NeedsAttention):
+                except Stopped:
                     raise
+                except NeedsAttention as exc:
+                    if exc.kind != 'navigation' or self._task_restart_used:
+                        raise
+                    screen = self.recover(cold_start=True)
+                    success = self.verify(task, before, screen)
                 except Exception:
                     logger.exception('任务执行异常：%s', task.title)
                     self.report_failure('任务执行异常', task)
-                    screen = self.recover()
-                    success = False
+                    screen = self.recover(cold_start=True)
+                    # Reopening may reveal already-settled server progress.
+                    success = self.verify(task, before, screen)
                 if not success and not disabled_reason and task.target_packages:
                     # Some deeplinks silently stay on a landing page. Only after
                     # that real attempt fails verification do we confirm absence.
@@ -868,13 +1024,21 @@ class CampaignRunner:
             seen_pages.add(signature)
             self.update('scanning', message='检查列表下方的任务', current_task='', remaining=0)
             self.control.check()
-            self.device.swipe(int(screen.width * .5), int(screen.height * .88),
-                              int(screen.width * .5), int(screen.height * .43), duration=.55)
-            scrolls += 1
-            self.control.wait(.7)
-            screen = self.read()
-            if not is_task_list(screen.nodes):
-                screen = self.recover()
+            self._task_restart_used = False
+            try:
+                self.device.swipe(int(screen.width * .5), int(screen.height * .88),
+                                  int(screen.width * .5), int(screen.height * .43), duration=.55)
+                scrolls += 1
+                self.control.wait(.7)
+                screen = self.read()
+                if not is_task_list(screen.nodes):
+                    screen = self.recover()
+            except (Stopped, NeedsAttention):
+                raise
+            except Exception:
+                logger.exception('任务列表读取异常')
+                self.report_failure('任务列表读取异常', phase='scanning')
+                screen = self.recover(cold_start=True)
         message = ('达到本轮任务次数上限，可再次开始继续' if total_attempts >= self.config['max_tasks']
                    else '本轮结束，可执行任务已处理；请查看待处理和未通过核验的任务')
         self.update('finished', message=message, current_task='', remaining=0,

@@ -265,6 +265,90 @@ class RunnerTests(unittest.TestCase):
         r.device.go_back.assert_not_called()
         r.device.click.assert_not_called()
 
+    def test_last_observation_is_accepted_after_navigation_deadline(self):
+        r = self.clock_runner()
+        r.config.update(page_timeout=3, return_timeout=5)
+        panel = task_screen()
+        external = Screen([], 1440, 3200, 'com.example.other')
+        def slow_read(**kwargs):
+            r.control.wait(20)
+            return panel
+        r.read = Mock(side_effect=slow_read)
+        self.assertIs(r._navigate_list(external, allow_restart=True), panel)
+        r.device.restart_app.assert_not_called()
+
+    def test_late_activity_still_opens_energy_menu_and_checks_panel(self):
+        r = self.clock_runner()
+        r.config.update(page_timeout=3, return_timeout=5)
+        activity = Screen([node('赚能量', 1150, 1200, 220)], 1440, 3200, r.origin)
+        panel = task_screen()
+        def slow_read(**kwargs):
+            r.control.wait(12 if not r.device.click.called else .3)
+            return panel if r.device.click.called else activity
+        r.read = Mock(side_effect=slow_read)
+        external = Screen([], 1440, 3200, 'com.example.other')
+        self.assertIs(r._navigate_list(external, allow_restart=True), panel)
+        r.device.click.assert_called_once_with(*activity.nodes[0].center)
+
+    def test_native_menu_label_supplements_ocr_without_clicking_coin_counter(self):
+        r = self.clock_runner()
+        activity = Screen([node('淘金币双11狂享20亿', 30, 80),
+                           node('淘金币', 60, 140, 100)], 1440, 3200, r.origin, 'ocr')
+        native = Screen([node('赚能量', 1150, 1200, 220)], 1440, 3200, r.origin)
+        panel = task_screen()
+        r.read = Mock(side_effect=lambda **kwargs: panel if r.device.click.called else native)
+        self.assertIs(r._navigate_list(activity, allow_restart=True), panel)
+        r.device.click.assert_called_once_with(*native.nodes[0].center)
+        r.device.go_back.assert_not_called()
+
+    def test_energy_menu_first_tap_ignored_then_retried_and_verified(self):
+        r = self.clock_runner()
+        activity = Screen([node('赚能量', 1150, 1200, 220)], 1440, 3200, r.origin)
+        panel = task_screen()
+        r.read = Mock(side_effect=lambda **kwargs: panel if r.device.click.call_count >= 2 else activity)
+        self.assertIs(r._navigate_list(activity, allow_restart=True), panel)
+        self.assertEqual(r.device.click.call_count, 2)
+        r.device.go_back.assert_not_called()
+
+    def test_unresponsive_menu_is_bounded_and_saved_only_once(self):
+        r = self.clock_runner()
+        r.config['page_timeout'] = 3
+        r.on_failure = Mock()
+        activity = Screen([node('赚能量', 1150, 1200, 220)], 1440, 3200, r.origin)
+        r.read = Mock(return_value=activity)
+        with self.assertRaises(NeedsAttention) as raised:
+            r._navigate_list(activity, allow_restart=True)
+        self.assertTrue(raised.exception.evidence_saved)
+        self.assertEqual(r.device.click.call_count, 6)
+        self.assertLess(r.control.now(), 8)
+        r.device.go_back.assert_not_called()
+        r.device.restart_app.assert_called_once_with(r.origin)
+        r.on_failure.assert_called_once()
+        self.assertEqual(r.on_failure.call_args.kwargs['reason'], str(raised.exception))
+
+    def test_image_verification_stops_before_visible_or_background_menu_tap(self):
+        r = self.clock_runner()
+        r.on_failure = Mock()
+        screen = Screen([node('将满足描述的所有图片拖放到指定区域后提交', 30, 500),
+                         node('赚能量', 1150, 1200, 220)], 1440, 3200, r.origin)
+        with self.assertRaises(NeedsAttention) as raised:
+            r._navigate_list(screen, allow_restart=True)
+        self.assertEqual(raised.exception.kind, 'security')
+        r.on_failure.assert_called_once()
+        self.assertEqual(r.on_failure.call_args.kwargs['phase'], 'security')
+        r.device.click.assert_not_called()
+        r.device.go_back.assert_not_called()
+
+    def test_native_security_modal_stops_before_using_background_menu(self):
+        r = self.clock_runner()
+        activity = Screen([node('淘金币双11狂享20亿', 30, 80)], 1440, 3200, r.origin, 'ocr')
+        native = Screen([node('请完成安全验证', 30, 500),
+                         node('赚能量', 1150, 1200, 220)], 1440, 3200, r.origin)
+        r.read = Mock(return_value=native)
+        with self.assertRaises(NeedsAttention):
+            r._navigate_list(activity, allow_restart=True)
+        r.device.click.assert_not_called()
+
     def test_activity_entry_uses_text_at_different_homepage_positions(self):
         r = self.clock_runner()
         for x, y, caption in [(30, 450, '领淘金币'), (900, 900, '领淘金币，抵现金'),
@@ -278,6 +362,91 @@ class RunnerTests(unittest.TestCase):
         screen = Screen([node('领淘金币商品详情已售100', 50, 500),
                          node('领淘金币 抵现金', 500, 2600)], 1440, 3200, r.origin)
         self.assertIsNone(r.activity_entry(screen, homepage=True))
+
+    def test_official_search_card_enters_without_clicking_same_named_search_field(self):
+        r = self.clock_runner()
+        search_field = node('淘金币', 100, 75, 120, 40)
+        enter = node('进入 >', 610, 182, 75, 35)
+        screen = Screen([search_field, node('淘金币', 125, 161, 100, 40),
+                         node('双11狂享20亿，最高得加抵金', 127, 209, 400, 30), enter,
+                         node('淘金币领取入口商品', 300, 900)], 720, 1600, r.origin)
+        self.assertIs(r.activity_entry(screen), enter)
+        screen.nodes.append(node('淘金币双11狂享20亿捞体力商品', 300, 1450))
+        self.assertFalse(r.activity_landing(screen))
+        screen.nodes[2] = node('双11狂享20亿，商品详情', 300, 1000)
+        self.assertIsNone(r.official_activity_entry(screen))
+
+    def test_loading_reward_panel_does_not_click_background_energy_button(self):
+        r = self.clock_runner()
+        loading = Screen([node('淘金币双11狂享20亿', 30, 80),
+                          node('累计任务奖励', 100, 800)], 1440, 3200, r.origin)
+        panel = task_screen()
+        r.read = Mock(return_value=panel)
+        self.assertIs(r.enter_task_panel(loading), panel)
+        r.device.click.assert_not_called()
+
+    def test_task_exception_cold_reopens_and_verifies_settled_progress(self):
+        r = self.clock_runner()
+        r.config['max_tasks'] = 1
+        before, after = task_screen(), task_screen(1)
+        r.ensure_list = Mock(return_value=before)
+        r.execute = Mock(side_effect=OSError('temporary page RPC failure'))
+        r.read = Mock(return_value=after)
+        with self.assertLogs('modules.campaign', level='ERROR'):
+            result = r.run(auto_open=True)
+        r.device.restart_app.assert_called_once_with(r.origin)
+        self.assertEqual(result['attempts'], 1)
+        self.assertEqual(result['completed'], 1)
+        self.assertEqual(result['failed'], 0)
+
+    def test_cold_recovery_is_shared_across_calls_for_same_task(self):
+        r = self.clock_runner()
+        panel = task_screen()
+        r.read = Mock(return_value=panel)
+        self.assertIs(r.recover(cold_start=True), panel)
+        self.assertIs(r.recover(cold_start=True), panel)
+        r.device.restart_app.assert_called_once_with(r.origin)
+
+    def test_cold_recovery_handles_initial_observation_rpc_failure(self):
+        r = self.clock_runner()
+        panel = task_screen()
+        r.read = Mock(side_effect=[OSError('temporary capture failure'), panel])
+        self.assertIs(r.recover(cold_start=True), panel)
+        r.device.restart_app.assert_called_once_with(r.origin)
+
+    def test_security_in_recovery_is_never_closed_or_restarted(self):
+        r = self.clock_runner()
+        security = Screen([node('亲，请拖动下方滑块完成验证', 30, 500)], 1440, 3200, r.origin)
+        r.read = Mock(return_value=security)
+        with self.assertRaises(NeedsAttention) as raised:
+            r.recover(cold_start=True)
+        self.assertEqual(raised.exception.kind, 'security')
+        r.device.restart_app.assert_not_called()
+        r.device.go_back.assert_not_called()
+
+    def test_navigation_exception_cannot_reboot_twice_for_same_task(self):
+        r = self.clock_runner()
+        r.ensure_list = Mock(return_value=task_screen())
+        def failed_navigation(*args):
+            r._restart_taobao(r.origin)
+            raise NeedsAttention('仍无法恢复任务列表', kind='navigation', evidence_saved=True)
+        r.execute = Mock(side_effect=failed_navigation)
+        with self.assertRaises(NeedsAttention):
+            r.run(auto_open=True)
+        r.device.restart_app.assert_called_once_with(r.origin)
+
+    def test_scanning_exception_cold_reopens_without_resetting_task_statistics(self):
+        r = self.clock_runner()
+        r.config['enabled_task_kinds'] = ['search']
+        panel = task_screen()
+        r.ensure_list = Mock(return_value=panel)
+        r.read = Mock(return_value=panel)
+        r.device.swipe.side_effect = OSError('temporary swipe failure')
+        with self.assertLogs('modules.campaign', level='ERROR'):
+            result = r.run(auto_open=True)
+        r.device.restart_app.assert_called_once_with(r.origin)
+        self.assertEqual(result['attempts'], 0)
+        self.assertEqual(result['completed'], 0)
 
     def test_unrecoverable_auto_entry_is_bounded_and_does_not_relaunch_forever(self):
         r = self.clock_runner()

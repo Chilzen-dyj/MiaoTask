@@ -20,6 +20,7 @@ import webbrowser
 
 from modules.campaign import CampaignRunner, NeedsAttention, RunControl, RunStats, Stopped, load_config, validate_config
 from modules.daily_state import DailyState, local_day
+from modules.notifications import notify_security_attention
 from modules.runtime import data_dir, version
 
 logger = logging.getLogger(__name__)
@@ -368,7 +369,10 @@ class Controller:
             self.interrupt_records('需要手动处理后重新核验')
             self.log('WARNING', str(exc))
             self.update(status='needs_attention', phase='needs_attention', message=str(exc), remaining=0)
-            self.on_failure(dict(reason=str(exc), phase='needs_attention', kind='needs_attention'))
+            if not exc.evidence_saved:
+                self.on_failure(dict(reason=str(exc), phase='needs_attention', kind=exc.kind))
+            if exc.kind == 'security':
+                notify_security_attention()
         except Exception as exc:
             self.interrupt_records('执行中断，本次进度尚未核验')
             logger.exception('设备操作失败')

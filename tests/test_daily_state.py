@@ -295,6 +295,32 @@ class ControllerDailyTests(unittest.TestCase):
             holder.join(1)
             c._preview_thread.join(1)
 
+    def test_security_exception_notifies_desktop_without_duplicate_capture_or_resume(self):
+        c = self.controller
+        def stop_for_security(auto_open):
+            c.on_failure(reason='请本人验证', phase='security', task={'title': '浏览任务'})
+            raise NeedsAttention('请本人验证', kind='security', evidence_saved=True)
+        runner = Mock()
+        runner.run.side_effect = stop_for_security
+        with patch('modules.control_panel.CampaignRunner', return_value=runner), \
+                patch('modules.control_panel.notify_security_attention') as notify:
+            c._work('run', {}, load_config())
+        notify.assert_called_once_with()
+        runner.run.assert_called_once()
+        self.assertEqual(c.snapshot()['status'], 'needs_attention')
+        self.assertEqual(c.snapshot()['daily']['failures_count'], 1)
+        self.assertEqual(c.snapshot()['last_failure']['phase'], 'security')
+
+    def test_navigation_attention_has_no_security_popup(self):
+        c = self.controller
+        runner = Mock()
+        runner.run.side_effect = NeedsAttention('未能进入任务菜单')
+        with patch('modules.control_panel.CampaignRunner', return_value=runner), \
+                patch('modules.control_panel.notify_security_attention') as notify:
+            c._work('run', {}, load_config())
+        notify.assert_not_called()
+        self.assertEqual(c.snapshot()['daily']['failures_count'], 1)
+
 
 if __name__ == '__main__':
     unittest.main()
