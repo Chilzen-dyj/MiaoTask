@@ -89,8 +89,8 @@ async function preview(){
   });
   try{await previewRequest;}finally{previewRequest=null;}
 }
-async function pollLoop(){clearTimeout(pollTimer);if(!pageActive||polling)return;polling=true;try{await poll();}finally{polling=false;if(pageActive)pollTimer=setTimeout(pollLoop,document.hidden?5000:800);}}
-async function previewLoop(){clearTimeout(previewTimer);if(!pageActive||document.hidden||previewing)return;previewing=true;try{await preview();}finally{previewing=false;if(pageActive&&!document.hidden)previewTimer=setTimeout(previewLoop,900);}}
+async function pollLoop(){clearTimeout(pollTimer);if(!pageActive||polling)return;polling=true;try{await poll();}finally{polling=false;if(pageActive)pollTimer=setTimeout(pollLoop,document.hidden?5000:300);}}
+async function previewLoop(){clearTimeout(previewTimer);if(!pageActive||document.hidden||previewing)return;previewing=true;try{await preview();}finally{previewing=false;if(pageActive&&!document.hidden)previewTimer=setTimeout(previewLoop,300);}}
 document.addEventListener('visibilitychange',()=>{clearTimeout(pollTimer);clearTimeout(previewTimer);pollLoop();if(!document.hidden)previewLoop();});
 window.addEventListener('pagehide',()=>{pageActive=false;clearTimeout(pollTimer);clearTimeout(previewTimer);});
 window.addEventListener('pageshow',event=>{if(event.persisted){pageActive=true;pollLoop();previewLoop();}});

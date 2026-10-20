@@ -212,8 +212,8 @@ class Controller:
             self._last_failure_stamp = time.monotonic()
 
     def _preview_loop(self):
-        while not self._preview_stop.wait(.15):
-            if time.monotonic() - self._preview_last < .9:
+        while not self._preview_stop.wait(.05):
+            if time.monotonic() - self._preview_last < .35:
                 continue
             with self.lock:
                 device = self.device
@@ -223,7 +223,7 @@ class Controller:
             if io_lock is None or not io_lock.acquire(blocking=False):
                 continue
             try:
-                image = device.screenshot()
+                image = device.screenshot(max_age=.15)
                 if self.device is device:
                     self.on_image(image)
             except Exception:

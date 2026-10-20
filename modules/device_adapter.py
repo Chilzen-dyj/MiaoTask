@@ -11,6 +11,7 @@ from functools import wraps
 import shlex
 import tempfile
 import threading
+import time
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -22,7 +23,14 @@ def serialized(method):
     @wraps(method)
     def call(self, *args, **kwargs):
         with getattr(self, 'io_lock', None) or nullcontext():
-            return method(self, *args, **kwargs)
+            mutating = method.__name__ not in {'screenshot', 'current_app', 'dump_hierarchy', 'installed_packages'}
+            if mutating:
+                self._screenshot_cache = None
+            try:
+                return method(self, *args, **kwargs)
+            finally:
+                if mutating:
+                    self._screenshot_cache = None
     return call
 
 
@@ -229,8 +237,14 @@ class DeviceAdapter:
         """Return a common package/activity mapping on both drivers."""
         if self.device_type == 'hmdriver2':
             package, activity = self._device.current_app()
-            return {'package': package or '', 'activity': activity or ''}
-        return self._device.app_current()
+            info = {'package': package or '', 'activity': activity or ''}
+        else:
+            info = self._device.app_current()
+        package = info.get('package', '')
+        if package != getattr(self, '_foreground_package', None):
+            self._screenshot_cache = None
+            self._foreground_package = package
+        return info
 
     @serialized
     def installed_packages(self):
@@ -261,28 +275,37 @@ class DeviceAdapter:
 
     @serialized
     def restart_app(self, package_name):
-        """Cold-start only when bounded task-stack recovery has failed."""
+        """Cold-start for fresh desktop entry or a bounded recovery attempt."""
         self.stop_app(package_name)
         self.resume_app(package_name)
 
     @serialized
-    def screenshot(self):
+    def screenshot(self, max_age=0):
         """Return a Pillow image; keep Harmony's temporary file off disk afterwards."""
+        cached = getattr(self, '_screenshot_cache', None)
+        if max_age > 0 and cached is not None and time.monotonic() - cached[0] <= min(max_age, .15):
+            return cached[1].copy()
+        started = time.monotonic()
+        self._screenshot_cache = None
         if self.device_type == 'uiautomator2':
             try:
-                return self._device.screenshot()
+                image = self._device.screenshot()
             except OSError:
                 # Cold launch can momentarily close the automation RPC socket.
                 # Explicit primary display uses u2's public direct-ADB capture,
                 # returning a fresh frame without another app/server restart.
                 logger.debug('截图服务暂时不可用，改用 ADB 截图', exc_info=True)
-                return self._device.screenshot(display_id=0)
-        from PIL import Image
-        with tempfile.TemporaryDirectory(prefix='miao-screen-') as folder:
-            path = str(Path(folder) / 'screen.png')
-            self._device.screenshot(path)
-            with Image.open(path) as image:
-                return image.convert('RGB').copy()
+                image = self._device.screenshot(display_id=0)
+        else:
+            from PIL import Image
+            with tempfile.TemporaryDirectory(prefix='miao-screen-') as folder:
+                path = str(Path(folder) / 'screen.png')
+                self._device.screenshot(path)
+                with Image.open(path) as source:
+                    image = source.convert('RGB').copy()
+        if hasattr(image, 'copy'):
+            self._screenshot_cache = (started, image.copy())
+        return image
 
     @serialized
     def dump_hierarchy(self):

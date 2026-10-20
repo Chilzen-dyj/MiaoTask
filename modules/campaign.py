@@ -518,7 +518,7 @@ class CampaignRunner:
         self._task_restart_used = True
         self.device.restart_app(package)
 
-    def _navigate_list(self, screen, *, allow_restart, recovering=False):
+    def _navigate_list(self, screen, *, allow_restart, recovering=False, launched=False):
         """One bounded navigation budget, including at most one cold restart."""
         package = self.origin or ('com.taobao.taobao4hmos' if self.device.device_type == 'hmdriver2'
                                   else 'com.taobao.taobao')
@@ -526,17 +526,22 @@ class CampaignRunner:
         deadline = self.control.now() + budget
         back_count = resumes = 0
         restarted = self._task_restart_used
-        last_action = self.control.now() - 10
+        last_action = self.control.now() if launched else self.control.now() - 10
         clicked = set()
         searched = False
         home_reset = False
         official_clicks = 0
         awaiting_activity = False
-        launch_pending = False
+        launch_pending = launched
         while True:
             self.guard(screen)
             if self._accept_list(screen):
                 return screen
+            if launched and screen.package != package and self.control.now() - last_action < self.config['page_timeout']:
+                self.control.wait(.2)
+                screen = self.read(force_ocr=bool(self.config['ocr']))
+                continue
+            launched = False
             # Process the last observation even if a slow OCR/RPC crossed the
             # navigation deadline. An arrived activity can still open its menu.
             if screen.package == package and (awaiting_activity or self.task_panel_entry(screen)
@@ -685,11 +690,27 @@ class CampaignRunner:
 
     def ensure_list(self, auto_open=False):
         self.update('locating', message='确认当前页面并进入活动任务列表')
+        package = self.origin or ('com.taobao.taobao4hmos' if self.device.device_type == 'hmdriver2'
+                                  else 'com.taobao.taobao')
+        if auto_open:
+            foreground = self.device.current_app().get('package', '')
+            # A launcher needs no screenshot/OCR. Stop the cached Taobao task
+            # before opening it, so its old scrolled homepage cannot be restored.
+            if isinstance(foreground, str) and ('launcher' in foreground or foreground.endswith('.home')):
+                self.update(message='从桌面启动：先关闭淘宝后台，再重新进入首页')
+                self._restart_taobao(package)
+                screen = self.read(force_ocr=bool(self.config['ocr']))
+                return self._navigate_list(screen, allow_restart=True, launched=True)
         screen = self.read(force_ocr=bool(self.config['ocr']))
         self.guard(screen)
         if self._accept_list(screen):
             return screen
         if auto_open:
+            if screen.package != package:
+                self.update(message='先关闭淘宝后台，再重新进入首页')
+                self._restart_taobao(package)
+                screen = self.read(force_ocr=bool(self.config['ocr']))
+                return self._navigate_list(screen, allow_restart=True, launched=True)
             return self._navigate_list(screen, allow_restart=True)
         if self.task_panel_entry(screen) or self.activity_landing(screen) or self.task_panel_visible(screen):
             screen = self.enter_task_panel(screen)

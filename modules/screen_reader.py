@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 import hashlib
 import logging
+import os
 import re
 import time
 
@@ -18,11 +19,19 @@ def local_ocr_engine():
         from rapidocr import RapidOCR
     except ImportError as exc:
         raise RuntimeError('页面未提供可读控件，请先运行 pip install -r requirements.txt 安装本地 OCR') from exc
-    return RapidOCR(params={
-        'EngineConfig.onnxruntime.intra_op_num_threads': 2,
-        'EngineConfig.onnxruntime.inter_op_num_threads': 2,
+    engine = RapidOCR(params={
+        'EngineConfig.onnxruntime.intra_op_num_threads': min(4, os.cpu_count() or 2),
+        'EngineConfig.onnxruntime.inter_op_num_threads': 1,
         'Global.log_level': 'warning',
     })
+    # The locked RapidOCR version exposes this recognizer protocol. If a source
+    # install uses an incompatible release, retain its standard OCR path.
+    try:
+        from modules.ocr_cache import ExactTextCache
+        engine.text_rec = ExactTextCache(engine._load_rec_model())
+    except (AttributeError, ImportError):
+        logger.info('当前 OCR 版本不支持文字块缓存，使用标准识别')
+    return engine
 
 
 @dataclass
@@ -111,7 +120,7 @@ class ScreenReader:
         return nodes
 
     def _capture(self):
-        image = self.device.screenshot().convert('RGB')
+        image = self.device.screenshot(max_age=.15).convert('RGB')
         self.last_image = image
         self._size = image.size
         if self.on_image:

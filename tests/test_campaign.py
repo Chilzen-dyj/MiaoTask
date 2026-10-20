@@ -214,7 +214,8 @@ class RunnerTests(unittest.TestCase):
         restored = task_screen()
         r.read = Mock(side_effect=[home, splash, restored])
         self.assertIs(r.ensure_list(auto_open=True), restored)
-        r.device.resume_app.assert_called_once_with('com.taobao.taobao')
+        r.device.restart_app.assert_called_once_with('com.taobao.taobao')
+        r.device.resume_app.assert_not_called()
         self.assertEqual(r.origin, 'com.taobao.taobao')
 
     def navigation_scenario(self):
@@ -265,6 +266,26 @@ class RunnerTests(unittest.TestCase):
         r.device.go_back.assert_not_called()
         r.device.click.assert_not_called()
 
+    def test_desktop_start_closes_cached_taobao_before_reading_any_page(self):
+        r = self.clock_runner()
+        r.device.current_app.return_value = {'package': 'com.miui.home'}
+        order = []
+        r.device.restart_app.side_effect = lambda package: order.append('cold-start')
+        panel = task_screen()
+        r.read = Mock(side_effect=lambda **kwargs: order.append('observe') or panel)
+        self.assertIs(r.ensure_list(auto_open=True), panel)
+        self.assertEqual(order, ['cold-start', 'observe'])
+        r.device.restart_app.assert_called_once_with(r.origin)
+        r.device.resume_app.assert_not_called()
+
+    def test_manual_current_page_mode_never_cold_starts_from_desktop(self):
+        r = self.clock_runner()
+        r.device.current_app.return_value = {'package': 'com.miui.home'}
+        r.read = Mock(return_value=Screen([], 1440, 3200, 'com.miui.home'))
+        with self.assertRaises(NeedsAttention):
+            r.ensure_list(auto_open=False)
+        r.device.restart_app.assert_not_called()
+
     def test_cold_launch_waits_for_splash_then_icon_menu_and_real_task_rows(self):
         r = self.clock_runner()
         r.config.update(page_timeout=3, return_timeout=5)
@@ -291,7 +312,7 @@ class RunnerTests(unittest.TestCase):
                 return activity if kwargs.get('force_ocr') else native
             return skeleton if elapsed < 4 else panel
         r.read = Mock(side_effect=read)
-        r.device.resume_app.side_effect = lambda package: state.update(stage='splash', changed=r.control.now())
+        r.device.restart_app.side_effect = lambda package: state.update(stage='splash', changed=r.control.now())
         def click(x, y):
             if (x, y) == home.nodes[0].center:
                 state.update(stage='activity', changed=r.control.now())
@@ -304,7 +325,8 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(r.device.click.call_count, 2)
         r.device.go_back.assert_not_called()
         r.device.swipe.assert_not_called()
-        r.device.restart_app.assert_not_called()
+        r.device.restart_app.assert_called_once_with(r.origin)
+        r.device.resume_app.assert_not_called()
 
     def test_panel_heading_is_never_reused_as_an_entry_button(self):
         r = self.clock_runner()
