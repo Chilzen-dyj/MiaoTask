@@ -119,6 +119,23 @@ class ScreenReader:
         self._last_preview = time.monotonic()
         return image
 
+    def enrich_regions(self, screen, regions):
+        """OCR crops of this exact observed frame, keeping full-frame guards."""
+        if not self.ocr_enabled or self.last_screen is not screen or self.last_image is None:
+            return screen
+        nodes = list(screen.nodes)
+        for left, top, right, bottom in regions:
+            left, top = max(0, left), max(0, top)
+            right, bottom = min(screen.width, right), min(screen.height, bottom)
+            if left >= right or top >= bottom:
+                continue
+            for node in self._ocr(self.last_image.crop((left, top, right, bottom))):
+                x1, y1, x2, y2 = node.bounds
+                nodes.append(TextNode(node.text, (x1+left, y1+top, x2+left, y2+top), 'ocr-region'))
+        enriched = Screen(nodes, screen.width, screen.height, screen.package, 'ocr+regions', screen.tree)
+        self.last_screen = enriched
+        return enriched
+
     def read(self, force_ocr=False):
         started = time.monotonic()
         direct_visual = bool(force_ocr and self.ocr_enabled)

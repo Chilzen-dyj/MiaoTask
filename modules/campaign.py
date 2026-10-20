@@ -297,16 +297,59 @@ class CampaignRunner:
             raise NeedsAttention(reason, evidence_saved=saved)
 
     def task_panel_entry(self, screen):
+        # Controls can say 去赚能量 / 立即赚能量 / 赚能量，按钮. Match short
+        # captions containing the configured label, while excluding sheet titles
+        # and task descriptions. OCR may split a short caption across two boxes.
+        candidates = list(screen.nodes)
+        anchor = screen.find(r'^升级赛车拿钱')
+        fragments = [n for n in screen.nodes if len(normalize(n.text)) <= 8
+                     and any(c in normalize(n.text) for c in '赚能量体力喵币做任务')]
+        for first in fragments:
+            for second in fragments:
+                if first is second:
+                    continue
+                a, b = first.bounds, second.bounds
+                height = max(a[3] - a[1], b[3] - b[1])
+                horizontal = (0 <= b[0] - a[2] <= height * 1.5
+                              and abs(first.center[1] - second.center[1]) <= height * .6)
+                vertical = (0 <= b[1] - a[3] <= height
+                            and abs(first.center[0] - second.center[0]) <= max(a[2]-a[0], b[2]-b[0]) * .6)
+                if horizontal or vertical:
+                    candidates.append(TextNode(first.text + second.text,
+                                      (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3])),
+                                      'ocr-joined'))
+        matches = []
         for label in self.config['task_entry_labels']:
             # This is the opened sheet's heading, never a button on this campaign.
             if normalize(label) == '做任务赚能量':
                 continue
-            for target in screen.nodes:
-                if (normalize(target.text) == normalize(label)
+            caption = normalize(label)
+            for target in candidates:
+                text = re.sub(r'[，,。.:：;；!！>＞()（）\[\]【】\u200b]', '', normalize(target.text))
+                if (caption in text and len(text) <= len(caption) + 8
+                        and not re.search(r'做任务赚|累计|奖励|浏览|邀请|已完成|去完成|升级|商品|攻略|教程', text)
+                        and (text == caption or caption != '做任务')
+                        and 0 <= target.center[0] < screen.width and target.center[1] > 0
+                        and (target.center[1] < screen.height * .7 or
+                             anchor and abs(target.center[1] - anchor.center[1]) < screen.height * .12)
                         and 0 < target.bounds[2] - target.bounds[0] < screen.width * .7
                         and 0 < target.bounds[3] - target.bounds[1] < screen.height * .2):
-                    return target
-        return None
+                    matches.append((text != caption, len(text), target))
+        return min(matches, key=lambda item: item[:2])[2] if matches else None
+
+    def menu_visual_fallback(self, screen):
+        """Re-read the visible control band at native resolution, without swipes."""
+        anchor = screen.find(r'^升级赛车拿钱')
+        if anchor:
+            top = max(0, anchor.bounds[1] - round(screen.height * .08))
+            bottom = min(screen.height, anchor.bounds[3] + round(screen.height * .08))
+        elif self.activity_landing(screen):
+            top, bottom = round(screen.height * .25), round(screen.height * .65)
+        else:
+            return screen
+        regions = [(0, top, round(screen.width * .55), bottom),
+                   (round(screen.width * .45), top, screen.width, bottom)]
+        return self.reader.enrich_regions(screen, regions)
 
     @staticmethod
     def task_panel_visible(screen):
@@ -345,6 +388,8 @@ class CampaignRunner:
         native_reads = 0
         last_native = self.control.now() - 10
         heading_seen = False
+        local_pass = 0
+        region_reads = 0
         while True:
             self.guard(screen)
             if self._accept_list(screen):
@@ -359,8 +404,21 @@ class CampaignRunner:
                 deadline = max(deadline, self.control.now() + self.config['page_timeout'])
                 self.update(message='已打开做任务赚能量，等待任务列表加载')
             if self.control.now() >= deadline:
+                if not heading_seen and local_pass == 0 and (self.activity_landing(screen) or expected_activity):
+                    local_pass = 1
+                    deadline = self.control.now() + self.config['page_timeout']
+                    attempts = native_reads = region_reads = 0
+                    self.update(message='仍在活动页，重新识别按钮并尝试备用点击位置')
+                    screen = self.read(force_ocr=bool(self.config['ocr']))
+                    continue
                 return screen
             target = None if panel_loading else self.task_panel_entry(screen)
+            if (not panel_loading and region_reads < 2 and (native_reads or local_pass)
+                    and (not target or attempts)):
+                region_reads += 1
+                screen = self.menu_visual_fallback(screen)
+                self.guard(screen)
+                target = self.task_panel_entry(screen)
             if (screen.source == 'ocr' and native_reads < 3
                     and (target or self.activity_landing(screen) or expected_activity)
                     and not panel_loading and self.control.now() - last_native >= 1.2):
@@ -376,8 +434,18 @@ class CampaignRunner:
                         continue
                     target = self.task_panel_entry(native) or target
             if target and attempts < 3 and self.control.now() - last_tap >= 1.2:
-                self.update(message='打开赚能量菜单，确认任务列表')
-                self.click(target)
+                self.update(message=f'打开赚能量菜单（页面内第{local_pass + 1}轮，第{attempts + 1}/3次）')
+                logger.info('任务菜单点击：页面内第%d轮，第%d次，来源%s，文案%s',
+                            local_pass + 1, attempts + 1, target.source, target.text)
+                if local_pass and target.bounds[3] - target.bounds[1] > screen.height * .035:
+                    # An alternate point stays inside a freshly located native
+                    # control, rather than guessing a phone-specific coordinate.
+                    x = target.center[0]
+                    y = target.bounds[1] + round((target.bounds[3] - target.bounds[1]) * .3)
+                    self.control.check()
+                    self.device.click(x, y)
+                else:
+                    self.click(target)
                 attempts += 1
                 last_tap = self.control.now()
             elif not (target or self.activity_landing(screen) or panel_loading or expected_activity or attempts):

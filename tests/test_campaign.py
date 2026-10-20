@@ -337,6 +337,83 @@ class RunnerTests(unittest.TestCase):
             screen = Screen([node(text, 60, 160)], 1440, 3200, r.origin, 'ocr')
             self.assertTrue(r.activity_landing(screen))
 
+    def test_energy_button_accepts_short_captions_containing_configured_label(self):
+        r = self.clock_runner()
+        for caption in ('赚能量', '去赚能量', '立即赚能量', '去赚能量，按钮', '前往赚能量入口'):
+            button = node(caption, 1150, 1200, 250)
+            screen = Screen([button], 1440, 3200, r.origin, 'ocr')
+            self.assertIs(r.task_panel_entry(screen), button, caption)
+
+    def test_menu_containment_does_not_match_heading_or_task_descriptions(self):
+        r = self.clock_runner()
+        for caption in ('做任务赚能量', '做任务赚能量，按钮', '浏览赚能量', '去完成赚能量',
+                        '赚能量教程', '升级赛车拿钱', '去赚金币'):
+            screen = Screen([node(caption, 1150, 1200, 250)], 1440, 3200, r.origin, 'ocr')
+            self.assertIsNone(r.task_panel_entry(screen), caption)
+        screen = Screen([node('去赚能量', 1150, 2700, 250)], 1440, 3200, r.origin, 'ocr')
+        self.assertIsNone(r.task_panel_entry(screen))
+
+    def test_menu_joins_horizontal_and_vertical_ocr_fragments(self):
+        r = self.clock_runner()
+        for fragments in ([node('去赚', 1150, 1200, 100, 50), node('能量', 1260, 1200, 100, 50)],
+                          [node('去赚', 1150, 1200, 100, 50), node('能量', 1150, 1260, 100, 50)]):
+            screen = Screen(fragments, 1440, 3200, r.origin, 'ocr')
+            target = r.task_panel_entry(screen)
+            self.assertIsNotNone(target)
+            self.assertEqual(normalize(target.text), '去赚能量')
+
+    def test_disconnected_caption_fragments_are_not_joined(self):
+        r = self.clock_runner()
+        screen = Screen([node('去赚', 1150, 1200, 100, 50), node('能量', 1150, 1600, 100, 50)],
+                        1440, 3200, r.origin, 'ocr')
+        self.assertIsNone(r.task_panel_entry(screen))
+
+    def test_second_in_page_pass_uses_located_button_before_any_cold_restart(self):
+        r = self.clock_runner()
+        r.config['page_timeout'] = 3
+        activity = Screen([node('淘金币双11狂享20亿', 60, 160),
+                           node('去赚能量', 1150, 1150, 280, 180)], 1440, 3200, r.origin)
+        panel = task_screen()
+        r.read = Mock(side_effect=lambda **kwargs: panel if r.device.click.call_count >= 4 else activity)
+        self.assertIs(r._navigate_list(activity, allow_restart=True), panel)
+        self.assertEqual(r.device.click.call_count, 4)
+        first, last = r.device.click.call_args_list[0].args, r.device.click.call_args_list[-1].args
+        self.assertNotEqual(first, last)
+        self.assertTrue(activity.nodes[1].bounds[1] < last[1] < activity.nodes[1].bounds[3])
+        r.device.restart_app.assert_not_called()
+        r.device.go_back.assert_not_called()
+        r.device.swipe.assert_not_called()
+
+    def test_exhausted_page_passes_remain_bounded_before_one_cold_restart(self):
+        r = self.clock_runner()
+        r.config['page_timeout'] = 3
+        activity = Screen([node('淘金币双11狂享20亿', 60, 160),
+                           node('去赚能量', 1150, 1150, 280, 180)], 1440, 3200, r.origin)
+        r.read = Mock(return_value=activity)
+        r.on_failure = Mock()
+        before_restart = []
+        r.device.restart_app.side_effect = lambda package: before_restart.append(r.device.click.call_count)
+        with self.assertRaises(NeedsAttention):
+            r._navigate_list(activity, allow_restart=True)
+        self.assertEqual(len(before_restart), 1)
+        self.assertGreaterEqual(before_restart[0], 5)
+        self.assertLessEqual(r.device.click.call_count, 12)
+        self.assertLess(r.control.now(), 15)
+        r.on_failure.assert_called_once()
+
+    def test_security_during_second_page_pass_prevents_restart_and_more_taps(self):
+        r = self.clock_runner()
+        r.config['page_timeout'] = 3
+        activity = Screen([node('淘金币双11狂享20亿', 60, 160),
+                           node('去赚能量', 1150, 1150, 280, 180)], 1440, 3200, r.origin)
+        security = Screen([node('请完成安全验证', 500, 900)], 1440, 3200, r.origin)
+        r.read = Mock(side_effect=lambda **kwargs: security if r.device.click.call_count >= 4 else activity)
+        with self.assertRaises(NeedsAttention) as raised:
+            r._navigate_list(activity, allow_restart=True)
+        self.assertEqual(raised.exception.kind, 'security')
+        self.assertEqual(r.device.click.call_count, 4)
+        r.device.restart_app.assert_not_called()
+
     def test_last_observation_is_accepted_after_navigation_deadline(self):
         r = self.clock_runner()
         r.config.update(page_timeout=3, return_timeout=5)
