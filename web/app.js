@@ -113,7 +113,7 @@ document.addEventListener('visibilitychange',()=>{clearTimeout(pollTimer);clearT
 window.addEventListener('pagehide',()=>{pageActive=false;clearTimeout(pollTimer);clearTimeout(previewTimer);});
 window.addEventListener('pageshow',event=>{if(event.persisted){pageActive=true;pollLoop();previewLoop();}});
 for(const id of ['connect','run','capture','stop'])$(id).addEventListener('click',()=>action(id));
-$('app-instance').addEventListener('change',()=>action('select_instance',{instance_id:$('app-instance').value}));
+$('app-instance').addEventListener('change',()=>{if(!$('sequence-instances').checked){queueOrder=[$('app-instance').value];renderInstanceOptions();}action('select_instance',{instance_id:$('app-instance').value});});
 $('refresh-instances').addEventListener('click',()=>action('refresh_instances'));
 $('sequence-instances').addEventListener('change',()=>{$('instance-options').hidden=!$('sequence-instances').checked;if($('sequence-instances').checked){document.querySelector('input[name=mode][value=auto]').checked=true;}renderInstanceOptions();if(state)render();});
 $('pause').addEventListener('click',()=>action(state?.status==='paused'?'resume':'pause'));
