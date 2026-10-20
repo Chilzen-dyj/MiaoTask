@@ -6,6 +6,14 @@
 
 **[下载 Windows 便携 ZIP](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11/releases/latest)** · **[详细使用说明](PORTABLE_README.md)** · **[开发文档](docs/DEVELOPMENT.md)** · **[完成情况与待办](docs/ROADMAP.md)**
 
+## 已知的一些问题：
+
+- [ ] 自动打开“赚能量”活动页面的逻辑还需要优化，目前有的手机是“赚能量”，有的是“去赚能量”，匹配逻辑需要修改；
+
+- [ ] 长时间运行会触发人工验证，滑块的问题比较好解决，但是还发现了拼图验证，因此暂时不考虑自动解决人机验证的方法；
+
+- [ ] 一些零散的任务需要用户自己做，没办法识别到所有的带“600”字样的按钮，为了防止一些逻辑冲突，暂时不做零散任务。
+
 ## 下载后怎么用
 
 1. 打开 [Releases](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11/releases/latest)，在 **Assets** 下载 Windows x64 便携 ZIP。`Source code` 是源码包，需要自行配置环境。
