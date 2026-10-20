@@ -295,6 +295,17 @@ class ControllerDailyTests(unittest.TestCase):
             holder.join(1)
             c._preview_thread.join(1)
 
+    def test_closed_browser_suspends_preview_captures(self):
+        c = self.controller
+        c._last_client_seen = 0
+        c._start_preview()
+        try:
+            self.assertFalse(c._preview_stop.wait(.2))
+            c.device.screenshot.assert_not_called()
+        finally:
+            c._preview_stop.set()
+            c._preview_thread.join(1)
+
     def test_security_exception_notifies_desktop_without_duplicate_capture_or_resume(self):
         c = self.controller
         def stop_for_security(auto_open):

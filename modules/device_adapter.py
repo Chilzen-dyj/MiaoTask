@@ -6,7 +6,7 @@
 """
 import logging
 import re
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from functools import wraps
 import shlex
 import tempfile
@@ -14,6 +14,7 @@ import threading
 import time
 from pathlib import Path
 import xml.etree.ElementTree as ET
+from modules.app_instances import AppInstance, InstanceMismatch, discover_android_instances, is_taobao, parse_foreground
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,10 @@ def serialized(method):
     @wraps(method)
     def call(self, *args, **kwargs):
         with getattr(self, 'io_lock', None) or nullcontext():
-            mutating = method.__name__ not in {'screenshot', 'current_app', 'dump_hierarchy', 'installed_packages'}
+            mutating = method.__name__ not in {'screenshot', 'current_app', 'dump_hierarchy', 'installed_packages', 'refresh_app_instances'}
+            if getattr(self, '_instance_guard_active', False) and method.__name__ in {
+                    'click', 'swipe', 'swipe_ext', 'go_back', 'input_text', 'clear_text', 'press'}:
+                self.check_instance(self.current_app())
             if mutating:
                 self._screenshot_cache = None
             try:
@@ -51,7 +55,11 @@ class DeviceAdapter:
         self.on_status = on_status or logger.info
         self._device = None
         self._last_xml = None  # 缓存uiautomator2的原始XML，避免json2xml重复调用
+        self.app_instances = []
+        self.selected_instance = None
+        self._instance_guard_active = False
         self._init_device()
+        self.refresh_app_instances()
 
     def _init_device(self):
         """初始化底层设备驱动"""
@@ -90,6 +98,8 @@ class DeviceAdapter:
             # 设置默认等待超时
             self._device.settings['wait_timeout'] = 3
             self._device.settings['operation_delay'] = (0.1, 0.1)
+            self._device.settings['operation_delay_methods'] = [
+                method for method in self._device.settings['operation_delay_methods'] if method != 'swipe']
             self.identity_serial = self._android_identity() or self.serial
         else:
             raise ValueError(f"不支持的设备类型: {self.device_type}")
@@ -212,7 +222,10 @@ class DeviceAdapter:
         if self.device_type == 'hmdriver2':
             self._device.start_app(package_name)
         else:
-            self._device.app_start(package_name, activity=activity)
+            if is_taobao(package_name):
+                self._launch_instance(package_name, activity)
+            else:
+                self._device.app_start(package_name, activity=activity)
 
     @serialized
     def stop_app(self, package_name):
@@ -220,7 +233,11 @@ class DeviceAdapter:
         if self.device_type == 'hmdriver2':
             self._device.stop_app(package_name)
         else:
-            self._device.app_stop(package_name)
+            if is_taobao(package_name):
+                target = self._target(package_name)
+                self._checked_shell(['am', 'force-stop', '--user', str(target.user_id), package_name])
+            else:
+                self._device.app_stop(package_name)
 
     @serialized
     def shell(self, cmd):
@@ -239,11 +256,19 @@ class DeviceAdapter:
             package, activity = self._device.current_app()
             info = {'package': package or '', 'activity': activity or ''}
         else:
-            info = self._device.app_current()
-        package = info.get('package', '')
-        if package != getattr(self, '_foreground_package', None):
+            # adbutils drops the user field. Read it from the SAME focused
+            # window record instead; a background instance is never evidence.
+            result = self._device.shell(['dumpsys', 'window', 'windows'])
+            info = parse_foreground(result.output) if result.exit_code == 0 else None
+            if info is None:
+                result = self._device.shell(['dumpsys', 'activity', 'activities'])
+                info = parse_foreground(result.output) if result.exit_code == 0 else None
+            if info is None:
+                info = dict(self._device.app_current(), user_id=None)
+        identity = (info.get('package', ''), info.get('user_id'))
+        if identity != getattr(self, '_foreground_package', None):
             self._screenshot_cache = None
-            self._foreground_package = package
+            self._foreground_package = identity
         return info
 
     @serialized
@@ -251,7 +276,11 @@ class DeviceAdapter:
         """Return installed Android packages, or None when detection is unavailable."""
         if self.device_type != 'uiautomator2':
             return None
-        result = self._device.shell(['pm', 'list', 'packages'])
+        target = getattr(self, 'selected_instance', None)
+        args = ['pm', 'list', 'packages']
+        if isinstance(target, AppInstance):
+            args += ['--user', str(target.user_id)]
+        result = self._device.shell(args)
         if result.exit_code != 0:
             return None
         return {line.removeprefix('package:').strip() for line in result.output.splitlines()
@@ -265,13 +294,99 @@ class DeviceAdapter:
         else:
             # Supplying the launcher activity avoids u2's monkey fallback, which
             # can change rotation lock settings. Android restores the existing task.
-            result = self._device.shell(['cmd', 'package', 'resolve-activity', '--brief',
-                                         '-a', 'android.intent.action.MAIN', '-c',
-                                         'android.intent.category.LAUNCHER', package_name])
-            component = result.output.strip().splitlines()[-1]
-            if '/' not in component or ' ' in component:
-                raise RuntimeError(f'无法找到应用启动入口：{package_name}')
-            self._device.app_start(package_name, activity=component.split('/', 1)[1], stop=False)
+            if is_taobao(package_name):
+                self._launch_instance(package_name)
+            else:
+                result = self._device.shell(['cmd', 'package', 'resolve-activity', '--brief',
+                                             '-a', 'android.intent.action.MAIN', '-c',
+                                             'android.intent.category.LAUNCHER', package_name])
+                component = result.output.strip().splitlines()[-1] if result.output.strip() else ''
+                if '/' not in component or ' ' in component:
+                    raise RuntimeError(f'无法找到应用启动入口：{package_name}')
+                self._device.app_start(package_name, activity=component.split('/', 1)[1], stop=False)
+
+    def _checked_shell(self, args):
+        result = self._device.shell(args)
+        if result.exit_code != 0 or re.search(r'Error:|Exception|Permission Denial', result.output):
+            raise RuntimeError('指定应用实例操作失败：' + result.output.strip()[:300])
+        return result.output
+
+    def _target(self, package):
+        target = getattr(self, 'selected_instance', None)
+        if not isinstance(target, AppInstance) or target.package != package or target.user_id is None:
+            raise InstanceMismatch('没有明确选定对应的淘宝实例，已阻止启动或停止其他淘宝')
+        return target
+
+    def _launch_instance(self, package, activity=None):
+        target = self._target(package)
+        if activity:
+            component = f'{package}/{activity}'
+        else:
+            output = self._checked_shell(['cmd', 'package', 'resolve-activity', '--brief', '--user',
+                                         str(target.user_id), '-a', 'android.intent.action.MAIN',
+                                         '-c', 'android.intent.category.LAUNCHER', package])
+            component = output.strip().splitlines()[-1] if output.strip() else ''
+        if not re.fullmatch(re.escape(package) + r'/[\w.$]+', component):
+            raise RuntimeError('无法找到所选淘宝实例的启动入口，请刷新实例列表')
+        self._checked_shell(['am', 'start', '--user', str(target.user_id), '-a', 'android.intent.action.MAIN',
+                             '-c', 'android.intent.category.LAUNCHER', '-n', component])
+        # A task switch is asynchronous. Never allow the old same-package user
+        # to be accepted as the newly launched instance.
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                info = self.current_app()
+            except Exception:
+                logger.debug('启动转场中暂未取得前台实例', exc_info=True)
+                info = {}
+            if (info.get('package'), info.get('user_id')) == (target.package, target.user_id):
+                return
+            time.sleep(.15)
+        raise InstanceMismatch('未确认所选淘宝实例已进入前台，已停止，未改用其他淘宝')
+
+    @serialized
+    def refresh_app_instances(self):
+        if getattr(self, '_instance_guard_active', False):
+            raise ValueError('执行期间不能刷新或切换应用实例')
+        if self.device_type == 'uiautomator2':
+            instances, warnings = discover_android_instances(self._device.shell)
+        else:
+            instances = [AppInstance('com.taobao.taobao4hmos', None, '淘宝 · HarmonyOS 原生应用')]
+            warnings = []
+        self.app_instances = instances
+        self.instance_warnings = warnings
+        previous = getattr(self, 'selected_instance', None)
+        self.selected_instance = next((i for i in instances if i == previous), instances[0] if instances else None)
+        return [item.to_dict() for item in instances]
+
+    @serialized
+    def select_app_instance(self, instance_id):
+        if getattr(self, '_instance_guard_active', False):
+            raise ValueError('执行期间不能切换应用实例，请先停止')
+        target = next((i for i in self.app_instances if i.id == instance_id), None)
+        if target is None:
+            raise ValueError('实例已失效，请刷新列表并重新选择')
+        self.selected_instance = target
+        self._screenshot_cache = None
+        return target
+
+    def check_instance(self, info):
+        target = getattr(self, 'selected_instance', None)
+        if isinstance(target, AppInstance) and is_taobao(info.get('package')):
+            if info.get('package') != target.package or (target.user_id is not None and info.get('user_id') != target.user_id):
+                raise InstanceMismatch('前台淘宝与选定实例不一致或无法确认用户空间，已停止操作；请检查实例选择后重新开始')
+
+    @contextmanager
+    def instance_session(self):
+        with self.io_lock:
+            if self.selected_instance is None or self._instance_guard_active:
+                raise InstanceMismatch('请先选择有效的淘宝实例')
+            self._instance_guard_active = True
+        try:
+            yield
+        finally:
+            with self.io_lock:
+                self._instance_guard_active = False
 
     @serialized
     def restart_app(self, package_name):

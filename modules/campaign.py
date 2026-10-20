@@ -10,7 +10,9 @@ import threading
 import time
 
 from modules.screen_reader import Screen, ScreenReader
-from modules.task_model import CLAIM_ACTIONS, TextNode, bounds_of, is_task_list, normalize, parse_tasks
+from modules.app_instances import AppInstance, InstanceMismatch, is_taobao
+from modules.browse_gestures import BrowseGestures, validate_swipes
+from modules.task_model import EXTERNAL_APPS, CLAIM_ACTIONS, TextNode, bounds_of, is_task_list, normalize, parse_tasks
 
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent.parent
@@ -26,6 +28,7 @@ def load_config(path=None):
 
 
 def validate_config(config):
+    validate_swipes(config)
     limits = {
         'default_browse_seconds': (1, 120), 'visit_seconds': (1, 120),
         'browse_extra_seconds': (0, 60),
@@ -131,7 +134,10 @@ class CampaignRunner:
         self.stats = RunStats()
         self.failures = Counter()
         self.records = {}
-        self.origin = None
+        target = getattr(device, 'selected_instance', None)
+        self.target_instance = target if isinstance(target, AppInstance) else None
+        self.origin = self.target_instance.package if self.target_instance else None
+        self.gestures = BrowseGestures(self.config)
         self.started = time.monotonic()
         self._external_seen = set()
         self._known_tasks = {}
@@ -196,6 +202,29 @@ class CampaignRunner:
                 r'没有可处理|无法.{0,4}(?:打开|跳转)|^(?:立即下载|下载并安装|安装并打开)$')):
             raise TaskUnavailable('目标应用不可用或跳转到安装页，已跳过，不再重复尝试')
 
+    def unavailable_landing(self, screen):
+        try:
+            self.check_destination(screen)
+        except TaskUnavailable as exc:
+            return str(exc)
+        return ''
+
+    def remember_missing_destination(self, screen):
+        """Without an active task, only persist an identified, absent app fact."""
+        if self.device.device_type != 'uiautomator2':
+            return
+        try:
+            packages = self.device.installed_packages()
+        except Exception:
+            return
+        if not isinstance(packages, (set, list, tuple)):
+            return
+        for name, targets in EXTERNAL_APPS:
+            if name in screen.text and not set(packages).intersection(targets):
+                reason = f'未安装{name}，已跳过；安装后重新识别即可恢复'
+                self.unavailable_tasks['app:' + name] = reason
+                logger.info(reason)
+
     def update(self, phase=None, **data):
         self.stats.elapsed = int(time.monotonic() - self.started)
         self.stats.skipped = sum(r.get('status') in ('manual', 'disabled') for r in self.records.values())
@@ -208,9 +237,16 @@ class CampaignRunner:
         self.control.check()
         screen = self.reader.read(force_ocr=force_ocr) if force_ocr else self.reader.read()
         self.control.check()
+        self.assert_instance(screen)
         self.update(package=screen.package, source=screen.source,
                     observation_ms=round(self.reader.last_observation_seconds * 1000))
         return screen
+
+    def assert_instance(self, screen):
+        target = self.target_instance
+        if target and is_taobao(screen.package) and (screen.package != target.package or
+                target.user_id is not None and screen.user_id != target.user_id):
+            raise InstanceMismatch('前台淘宝与本轮选定实例不一致或无法核定，已停止；不会继续操作另一账号')
 
     def click(self, node):
         self.control.check()
@@ -285,6 +321,7 @@ class CampaignRunner:
         self.update(tasks=list(self.records.values()))
 
     def guard(self, screen):
+        self.assert_instance(screen)
         text = normalize(screen.text)
         if re.search(r'滑块|拖动.{0,8}验证|安全验证|请完成验证|验证码|人机验证|操作过于频繁|账号存在风险|访问被拒绝|'
                      r'将满足描述的所有图片拖放到指定区域', text):
@@ -398,6 +435,8 @@ class CampaignRunner:
             if not screen.package.startswith('com.taobao.taobao'):
                 return screen
             panel_loading = self.task_panel_visible(screen) or bool(screen.find('累计任务奖励', exact=True))
+            if not panel_loading and not self.activity_landing(screen) and self.unavailable_landing(screen):
+                return screen
             if panel_loading and not heading_seen:
                 heading_seen = True
                 # The sheet opens first, then requests the task rows. This is a
@@ -428,7 +467,7 @@ class CampaignRunner:
                 native = self.read()
                 self.guard(native)
                 if native.package == screen.package:
-                    if self.task_panel_visible(native):
+                    if self.task_panel_visible(native) or is_task_list(native.nodes):
                         # A sheet may appear during the hierarchy RPC. Confirm
                         # the actual foreground again instead of tapping old OCR.
                         screen = self.read(force_ocr=bool(self.config['ocr']))
@@ -506,6 +545,7 @@ class CampaignRunner:
         return None
 
     def _accept_list(self, screen):
+        self.assert_instance(screen)
         if (self.task_panel_visible(screen) and is_task_list(screen.nodes)
                 and parse_tasks(screen.nodes, screen.width, screen.height)
                 and screen.package.startswith('com.taobao.taobao')):
@@ -537,6 +577,15 @@ class CampaignRunner:
             self.guard(screen)
             if self._accept_list(screen):
                 return screen
+            if self.unavailable_landing(screen) and back_count < self.config['max_back_steps']:
+                self.remember_missing_destination(screen)
+                self.update(message='跳转未成功，先返回原任务列表；已确认缺失的应用今日跳过')
+                self.device.go_back()
+                back_count += 1
+                last_action = self.control.now()
+                self.control.wait(.4)
+                screen = self.read(force_ocr=bool(self.config['ocr']))
+                continue
             if launched and screen.package != package and self.control.now() - last_action < self.config['page_timeout']:
                 self.control.wait(.2)
                 screen = self.read(force_ocr=bool(self.config['ocr']))
@@ -549,6 +598,9 @@ class CampaignRunner:
                 screen = self.enter_task_panel(screen, expected_activity=awaiting_activity)
                 if self._accept_list(screen):
                     return screen
+                if self.unavailable_landing(screen) or screen.package != package:
+                    awaiting_activity = False
+                    continue
                 if not allow_restart or restarted:
                     break
                 self.update(message='任务菜单未打开，关闭并重开淘宝后重新读取')
@@ -593,11 +645,16 @@ class CampaignRunner:
                 native = self.read()
                 if native.package == package:
                     screen = Screen([*native.nodes, *screen.nodes], screen.width, screen.height,
-                                    package, 'ui+ocr', native.tree)
+                                    package, 'ui+ocr', native.tree, native.user_id)
             # Empty/splash observations get a short rendering grace period.
             ready = bool(normalize(screen.text))
             if screen.package != package:
-                if resumes < 2:
+                if back_count < min(2, self.config['max_back_steps']):
+                    self.device.go_back()
+                    back_count += 1
+                    last_action = self.control.now()
+                    self.control.wait(.4)
+                elif resumes < 2:
                     self.device.resume_app(package)
                     resumes += 1
                     launch_pending = True
@@ -693,10 +750,14 @@ class CampaignRunner:
         package = self.origin or ('com.taobao.taobao4hmos' if self.device.device_type == 'hmdriver2'
                                   else 'com.taobao.taobao')
         if auto_open:
-            foreground = self.device.current_app().get('package', '')
+            info = self.device.current_app()
+            foreground = info.get('package', '')
             # A launcher needs no screenshot/OCR. Stop the cached Taobao task
             # before opening it, so its old scrolled homepage cannot be restored.
-            if isinstance(foreground, str) and ('launcher' in foreground or foreground.endswith('.home')):
+            target = self.target_instance
+            wrong_instance = bool(target and is_taobao(foreground) and
+                                  (foreground != target.package or target.user_id is not None and info.get('user_id') != target.user_id))
+            if wrong_instance or isinstance(foreground, str) and ('launcher' in foreground or foreground.endswith('.home')):
                 self.update(message='从桌面启动：先关闭淘宝后台，再重新进入首页')
                 self._restart_taobao(package)
                 screen = self.read(force_ocr=bool(self.config['ocr']))
@@ -735,7 +796,7 @@ class CampaignRunner:
         self.update('returning', message='自动恢复淘宝活动任务列表')
         try:
             screen = self.read(force_ocr=bool(self.config['ocr']))
-        except (Stopped, NeedsAttention):
+        except (Stopped, NeedsAttention, InstanceMismatch):
             raise
         except Exception:
             if not cold_start or self._task_restart_used:
@@ -751,11 +812,10 @@ class CampaignRunner:
             screen = self.read(force_ocr=bool(self.config['ocr']))
         return self._navigate_list(screen, allow_restart=True, recovering=True)
 
-    def browse_swipe(self, screen, reverse=False):
+    def browse_swipe(self, screen):
         self.control.check()
-        start_y, end_y = (.47, .77) if reverse else (.77, .47)
-        self.device.swipe(int(screen.width * .5), int(screen.height * start_y),
-                          int(screen.width * .5), int(screen.height * end_y), duration=.45)
+        x1, y1, x2, y2, duration = self.gestures.sample(screen.width, screen.height)
+        self.device.swipe(x1, y1, x2, y2, duration=duration)
 
     @staticmethod
     def search_results_ready(screen):
@@ -934,7 +994,6 @@ class CampaignRunner:
         browse_deadline = browse_started + min(seconds, self.config['max_task_seconds'])
         remaining = browse_deadline - self.control.now()
         explicit_success = False
-        swipe_count = 0
         next_observation = self.control.now() + 1
         while remaining > 0:
             self.control.check()
@@ -960,12 +1019,11 @@ class CampaignRunner:
             remaining = browse_deadline - self.control.now()
             self.update('browsing', message='跨应用浏览中' if cross else '浏览中', remaining=max(0, int(remaining + .9)))
             # Sustained scroll gestures keep the activity's browse counter running.
-            # Alternate pairs of gestures so finite pages do not stay at the bottom.
+            # Bounded varying bursts reverse direction before a finite page stalls.
             scrolling = self.config['scroll_browse'] and not cross and task.kind in ('browse', 'search')
             if scrolling and remaining > 0:
-                self.browse_swipe(screen, reverse=swipe_count % 4 >= 2)
-                swipe_count += 1
-            interval = max(0, min(.35 if scrolling else 1, browse_deadline - self.control.now()))
+                self.browse_swipe(screen)
+            interval = max(0, min(self.gestures.interval() if scrolling else 1, browse_deadline - self.control.now()))
             self.control.wait(interval)
             # Pause time must not count as browse time; wait() itself excludes pauses.
             remaining = browse_deadline - self.control.now()
@@ -1051,7 +1109,7 @@ class CampaignRunner:
         self.started = time.monotonic()
         try:
             screen = self.ensure_list(auto_open)
-        except (Stopped, NeedsAttention):
+        except (Stopped, NeedsAttention, InstanceMismatch):
             raise
         except Exception:
             if not auto_open or self._task_restart_used:
@@ -1114,7 +1172,7 @@ class CampaignRunner:
                     self.unavailable_tasks[self.unavailable_key(task)] = disabled_reason
                     screen = self.recover()
                     success = False
-                except Stopped:
+                except (Stopped, InstanceMismatch):
                     raise
                 except NeedsAttention as exc:
                     if exc.kind != 'navigation' or self._task_restart_used:
@@ -1178,7 +1236,7 @@ class CampaignRunner:
                 screen = self.read()
                 if not is_task_list(screen.nodes):
                     screen = self.recover()
-            except (Stopped, NeedsAttention):
+            except (Stopped, NeedsAttention, InstanceMismatch):
                 raise
             except Exception:
                 logger.exception('任务列表读取异常')

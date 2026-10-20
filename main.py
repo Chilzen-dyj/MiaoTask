@@ -26,6 +26,7 @@ def main():
     parser.add_argument('--port-file', help='将服务 URL 写入指定文件，供打包验证使用')
     parser.add_argument('--device', choices=['android', 'harmony'], default='android')
     parser.add_argument('--serial', help='USB 序列号或已连接的无线调试地址')
+    parser.add_argument('--instance', help='CLI 指定包名@用户空间，例 com.taobao.taobao@999')
     parser.add_argument('--auto-open', action='store_true', help='尝试从淘宝首页自动进入活动')
     parser.add_argument('--scan', action='store_true', help='CLI 仅识别任务，不执行')
     parser.add_argument('--config', help='覆盖默认配置的 JSON 文件')
@@ -64,12 +65,16 @@ def main():
             parser.exit(1, f'控制台启动失败：{exc}，可通过 --port 指定其他端口\n')
         return
     from modules.device_adapter import DeviceAdapter
+    from modules.app_instances import InstanceMismatch
     device = DeviceAdapter('hmdriver2' if args.device == 'harmony' else 'uiautomator2', args.serial)
+    if args.instance:
+        device.select_app_instance(args.instance)
     runner = CampaignRunner(device, config)
     try:
-        result = runner.scan(args.auto_open) if args.scan else runner.run(args.auto_open)
+        with device.instance_session():
+            result = runner.scan(args.auto_open) if args.scan else runner.run(args.auto_open)
         print(json.dumps(result, ensure_ascii=False, indent=2))
-    except (NeedsAttention, Stopped) as exc:
+    except (NeedsAttention, Stopped, InstanceMismatch) as exc:
         parser.exit(2, f'{exc}\n')
     except KeyboardInterrupt:
         runner.control.stopped.set()

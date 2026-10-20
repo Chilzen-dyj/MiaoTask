@@ -3,6 +3,10 @@ import time
 
 
 def _get_taobao_pkg(device):
+    from modules.app_instances import AppInstance
+    target = getattr(device, 'selected_instance', None)
+    if isinstance(target, AppInstance):
+        return target.package
     return 'com.taobao.taobao4hmos' if device.device_type == 'hmdriver2' else 'com.taobao.taobao'
 
 

@@ -53,17 +53,22 @@ def _counts(value):
 class DailyState:
     """One device, one local calendar day; progress events are cumulative per run."""
 
-    def __init__(self, root, serial, device_type, day=None):
+    def __init__(self, root, serial, device_type, day=None, instance_id=''):
         if not isinstance(serial, str) or not serial.strip() or serial.strip() == '自动选择':
             raise ValueError('无法取得真实设备标识，不能安全加载设备当天记录')
         self.serial = serial.strip()
         self.redaction_values = {self.serial}
         self.device_type = device_type
+        self.instance_id = instance_id
         self.date = day or local_day()
         # Validate before using the date as a directory component.
         datetime.strptime(self.date, '%Y-%m-%d')
         self.device_key = hashlib.sha256((device_type + '\0' + self.serial).encode()).hexdigest()[:16]
         self.folder = Path(root) / 'daily' / self.date / self.device_key
+        # Keep the primary app's v8 daily records; other instances never inherit
+        # that app's progress, skip facts or failures, even on the same phone.
+        if instance_id and instance_id not in ('com.taobao.taobao@0', 'com.taobao.taobao4hmos@native'):
+            self.folder /= 'instances/' + hashlib.sha256(instance_id.encode()).hexdigest()[:16]
         self.folder.mkdir(parents=True, exist_ok=True)
         self.failures_dir = self.folder / 'failures'
         self.failures_dir.mkdir(exist_ok=True)
@@ -73,6 +78,7 @@ class DailyState:
         self._last_failure = ('', 0.0, None)
         self.recovery_warning = ''
         self.data = dict(schema=1, date=self.date, device_key=self.device_key,
+                         instance_id=instance_id,
                          device_type=device_type, stats=_counts({}), unavailable_tasks={},
                          watermarks={}, skipped_task_keys=[], failures_count=0,
                          created_at=_timestamp(), updated_at=_timestamp(), last_state={})
@@ -81,6 +87,9 @@ class DailyState:
                 loaded = json.loads(self.stats_path.read_text(encoding='utf-8'))
                 if (loaded.get('schema') != 1 or loaded.get('date') != self.date
                         or loaded.get('device_key') != self.device_key
+                        or (loaded.get('instance_id', instance_id) != instance_id and not
+                            (instance_id in ('com.taobao.taobao@0', 'com.taobao.taobao4hmos@native')
+                             and loaded.get('instance_id', '') == ''))
                         or not isinstance(loaded.get('stats'), dict)
                         or not isinstance(loaded.get('unavailable_tasks'), dict)
                         or not all(isinstance(key, str) and isinstance(value, str)
@@ -136,6 +145,7 @@ class DailyState:
     def snapshot(self):
         with self.lock:
             return dict(date=self.date, device_key=self.device_key,
+                        instance_id=self.instance_id,
                         stats=copy.deepcopy(self.data['stats']),
                         unavailable_count=len(self.data['unavailable_tasks']),
                         failures_count=self.data['failures_count'],
@@ -204,7 +214,7 @@ class DailyState:
             name = datetime.now().strftime('%H%M%S-%f') + '-' + uuid.uuid4().hex[:6]
             metadata_path = self.failures_dir / (name + '.json')
             screenshot_path = self.failures_dir / (name + '.png')
-            details.update(time=_timestamp(), date=self.date, device_key=self.device_key,
+            details.update(time=_timestamp(), date=self.date, device_key=self.device_key, instance_id=self.instance_id,
                            metadata=str(metadata_path), screenshot='')
             if image is not None:
                 temporary = screenshot_path.with_suffix('.png.tmp')

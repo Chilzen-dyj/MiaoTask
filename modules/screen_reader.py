@@ -42,6 +42,7 @@ class Screen:
     package: str
     source: str = "ui"
     tree: object = None
+    user_id: int | None = None
 
     @property
     def text(self):
@@ -141,7 +142,7 @@ class ScreenReader:
             for node in self._ocr(self.last_image.crop((left, top, right, bottom))):
                 x1, y1, x2, y2 = node.bounds
                 nodes.append(TextNode(node.text, (x1+left, y1+top, x2+left, y2+top), 'ocr-region'))
-        enriched = Screen(nodes, screen.width, screen.height, screen.package, 'ocr+regions', screen.tree)
+        enriched = Screen(nodes, screen.width, screen.height, screen.package, 'ocr+regions', screen.tree, screen.user_id)
         self.last_screen = enriched
         return enriched
 
@@ -149,7 +150,8 @@ class ScreenReader:
         started = time.monotonic()
         direct_visual = bool(force_ocr and self.ocr_enabled)
         tree = None if direct_visual else self.device.dump_hierarchy()
-        package = self.device.current_app().get("package", "")
+        foreground = self.device.current_app()
+        package = foreground.get("package", "")
         nodes = [] if direct_visual else self._flatten(tree)
         meaningful = [n for n in nodes if n.bounds[3] - n.bounds[1] < (self._size or (1440, 3200))[1] * .4]
         source = "ui"
@@ -165,7 +167,7 @@ class ScreenReader:
             self._capture()
         if self._size is None:
             self._size = self.device.display_size
-        screen = Screen(nodes, *self._size, package, source, tree)
+        screen = Screen(nodes, *self._size, package, source, tree, foreground.get('user_id'))
         self.last_screen = screen
         self.last_observation_seconds = time.monotonic() - started
         return screen

@@ -15,7 +15,7 @@ python -m venv .venv
 ```
 
 Windows 可使用 `start.bat`。网页默认自动定位淘宝活动，一键开始会先重新读取任务；普通返回失效时可重开淘宝，再寻找首页活动入口，找不到时尝试搜索活动词。
-分身应用建议手动进入活动后执行；恢复能力取决于驱动暴露的包名及用户上下文，尚未验证分身场景。
+v9 本地预览支持按包名与 Android 用户空间选择分身；网页可调整顺序串行执行。当前已验证红米主应用与用户空间 999 的分身，其他厂商与第三方容器需另行验证，见 [本地预览记录](PREVIEW-v9.md)。
 
 ```powershell
 # 只识别任务，自动选择已连接手机
@@ -23,6 +23,9 @@ python main.py --cli --scan
 
 # 指定手机并限制本轮次数
 python main.py --cli --serial YOUR_SERIAL --max-tasks 5
+
+# 指定 Android 淘宝分身（用户空间以手机实际发现结果为准）
+python main.py --cli --instance com.taobao.taobao@999 --auto-open --max-tasks 2
 
 # 鸿蒙、自动进入活动、关闭跨应用访问
 python main.py --cli --device harmony --auto-open --no-cross-app
@@ -39,12 +42,15 @@ CLI 仍保留 `--scan` 供开发调试，网页已将识别并入开始按钮。
 
 源码模式写入 `runtime/`，便携模式写入 `%LOCALAPPDATA%\MiaoTask`，可由 `MIAO_DATA_DIR` 覆盖。
 每台设备以驱动类型和实际标识计算哈希键，按本机自然日存储 `daily/YYYY-MM-DD/<device_key>/`。
+主应用保留旧路径；其他实例在其下使用 `instances/<instance_hash>/`，分别累计与导出，避免共用缺失应用事实。
 当天 `state.json` 保存增量累计统计及不可用任务，`events.jsonl` 保存日志；`failures/` 保存失败 JSON 和可取得的截图。
 重新扫描不会累计同一批执行数，同日重开会延续记录，跨日另建一份并重新判断应用可用性。
 
 控制台状态的 `stats` 表示本轮，`daily.stats` 表示该设备当天累计；`image_sequence` 标记新预览。
 GET `/api/diagnostics` 下载当前设备当天的诊断 ZIP。文字设备标识隐藏，截图不自动脱敏；样例测试必须使用模拟数据，不将真实记录提交仓库。
-同一设备换账号仍共用当天统计，见 [隐私说明](PRIVACY.md)。
+同一设备、同一实例内切换账号仍共用当天统计；不同分身独立。见 [隐私说明](PRIVACY.md)。
+
+Android 实例操作显式传入 `--user`，具体命令见 [Android ADB 官方文档](https://developer.android.com/tools/adb)。前台身份来自当前焦点窗口的包名和用户字段；身份无法核定时不继续操作淘宝。Windows 托盘使用系统 API，无额外 GUI 依赖；关闭浏览器后停止额外预览截图，托盘退出会停止任务并关闭 HTTP 服务。
 
 ## 测试、构建与发布
 

@@ -647,6 +647,7 @@ class RunnerTests(unittest.TestCase):
         clock = [0.0]
         r.control.now = lambda: clock[0]
         r.control.wait.side_effect = lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+        r.device.swipe.side_effect = lambda *args, **kwargs: clock.__setitem__(0, clock[0] + kwargs.get('duration', .45))
         return r
 
     def search_page(self, query='搜索'):
@@ -987,15 +988,43 @@ class RunnerTests(unittest.TestCase):
         after.nodes = [n for n in after.nodes if n.text != '累计任务奖励']
         self.assertFalse(r.verify(task, before, after))
 
-    def test_cross_app_resume_then_reopen_panel_without_extra_back(self):
+    def test_cross_app_first_returns_then_reopens_panel_without_restart(self):
         r = self.runner()
         external = Screen([node('蚂蚁庄园', 0, 0)], 1440, 3200, 'com.eg.android.AlipayGphone')
         home = Screen([node('赚能量', 1150, 1200)], 1440, 3200, r.origin)
         r.read = Mock(side_effect=[external, home, task_screen(1)])
         self.assertTrue(is_task_list(r.recover().nodes))
-        r.device.resume_app.assert_called_once_with(r.origin)
+        r.device.resume_app.assert_not_called()
         r.device.click.assert_called_once()
-        r.device.go_back.assert_not_called()
+        r.device.go_back.assert_called_once()
+        r.device.restart_app.assert_not_called()
+
+    def test_menu_jump_to_missing_app_returns_to_list_and_records_device_fact(self):
+        r = self.clock_runner()
+        activity = Screen([node('去赚能量', 1150, 1200)], 1440, 3200, r.origin)
+        landing = Screen([node('微博客户端', 20, 100), node('若没有安装 微博，请先下载', 50, 800),
+                          node('下载微博App', 80, 1200)], 1440, 3200, r.origin)
+        panel = task_screen(1)
+        r.device.installed_packages.return_value = set()
+        r.read = Mock(side_effect=[landing, panel])
+        self.assertIs(r._navigate_list(activity, allow_restart=True), panel)
+        r.device.click.assert_called_once()
+        r.device.go_back.assert_called_once()
+        r.device.restart_app.assert_not_called()
+        self.assertIn('未安装微博', r.unavailable_tasks['app:微博'])
+
+    def test_unknown_download_landing_can_return_without_inventing_missing_app(self):
+        r = self.clock_runner()
+        landing = Screen([node('未找到对应应用', 20, 100), node('安装并打开', 80, 1200)],
+                         1440, 3200, r.origin)
+        r.device.installed_packages.return_value = {'com.sina.weibo'}
+        panel = task_screen(1)
+        r.read = Mock(return_value=panel)
+        self.assertIs(r._navigate_list(landing, allow_restart=True), panel)
+        r.device.go_back.assert_called_once()
+        r.device.click.assert_not_called()
+        r.device.restart_app.assert_not_called()
+        self.assertFalse(r.unavailable_tasks)
 
     def test_failed_progress_has_bounded_attempts(self):
         r = self.runner()

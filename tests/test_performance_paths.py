@@ -56,6 +56,7 @@ class FreshFrameTests(unittest.TestCase):
         adapter.device_type = 'uiautomator2'
         adapter.io_lock = threading.RLock()
         adapter._device = Mock()
+        adapter._device.shell.return_value = Mock(exit_code=1, output='')
         adapter._device.screenshot.return_value = Image.new('RGB', (40, 80), 'white')
         return adapter
 

@@ -19,5 +19,13 @@
   "allow_cross_app": true,
   "ocr": true,
   "scroll_browse": true,
+  "swipe_distance_min": 0.18,
+  "swipe_distance_max": 0.36,
+  "swipe_duration_min": 0.25,
+  "swipe_duration_max": 0.65,
+  "swipe_interval_min": 0,
+  "swipe_interval_max": 0,
+  "swipe_burst_min": 1,
+  "swipe_burst_max": 3,
   "claim_rewards": true
 }

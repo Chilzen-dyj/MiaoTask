@@ -5,18 +5,20 @@ const statusLabels = {disconnected:'等待连接',connecting:'正在连接',read
 const phaseLabels = {locating:'LOCATING CAMPAIGN',ready:'READY TO GO',opening:'OPENING TASK',browsing:'BROWSING IN PROGRESS',returning:'BACK TO YOUR TASKS',scanning:'FINDING MORE TASKS',finished:'SESSION FINISHED',stopped:'SESSION STOPPED',needs_attention:'YOUR ATTENTION NEEDED'};
 const taskLabels = {pending:'待执行',running:'执行中',done:'已核验',manual:'手动处理',failed:'未通过',disabled:'已跳过'};
 const kindLabels = {browse:'浏览',search:'搜索',visit:'跳转',claim:'领奖',manual:'手动',done:'完成'};
+let instanceHash='', queueOrder=[];
 let state, token='', filter='all', taskHash='', logsHash='', initialized=false, requesting=false, toastTimer;
 let pollRequest=null, pollTimer, previewTimer, previewRequest=null, previewReady=false, pageActive=true, lastPreviewSequence=null, polling=false, previewing=false;
 const clockText=seconds=>{seconds=Math.max(0,Math.floor(seconds||0));return `${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`;};
 function el(tag, cls, text) {const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;}
 function toast(text){$('toast').textContent=text;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,6000);}
-function config(){return {default_browse_seconds:Number($('browse-seconds').value),browse_extra_seconds:Number($('browse-extra').value),max_attempts:Number($('max-attempts').value),max_tasks:Number($('max-tasks').value),enabled_task_kinds:['browse','search','visit','claim'].filter(k=>$('kind-'+k).checked),allow_cross_app:$('cross-app').checked,ocr:$('ocr').checked,scroll_browse:$('scroll').checked,claim_rewards:$('claim').checked};}
-async function action(name){
+function config(){const swipes={};for(const name of ['distance','duration','interval','burst'])for(const bound of ['min','max'])swipes['swipe_'+name+'_'+bound]=Number($('swipe-'+name+'-'+bound).value)/(name==='distance'?100:1);return {...swipes,default_browse_seconds:Number($('browse-seconds').value),browse_extra_seconds:Number($('browse-extra').value),max_attempts:Number($('max-attempts').value),max_tasks:Number($('max-tasks').value),enabled_task_kinds:['browse','search','visit','claim'].filter(k=>$('kind-'+k).checked),allow_cross_app:$('cross-app').checked,ocr:$('ocr').checked,scroll_browse:$('scroll').checked,claim_rewards:$('claim').checked};}
+async function action(name, extra={}){
   if(requesting)return;
   if(['run','connect','configure'].includes(name)&&!$('settings-form').reportValidity())return;
   if(name==='run'&&!config().enabled_task_kinds.length){toast('请至少选择一种本轮任务类型');return;}
   requesting=true;
-  try{const payload={config:config(),auto_open:document.querySelector('input[name=mode]:checked').value==='auto'};
+  try{const payload={...extra,config:config(),auto_open:document.querySelector('input[name=mode]:checked').value==='auto'};
+    if(name==='run'){payload.instance_ids=$('sequence-instances').checked?queueOrder:[$('app-instance').value];if(!payload.instance_ids.length)throw new Error('请至少选择一个淘宝实例');if($('sequence-instances').checked)payload.auto_open=true;}
     if(name==='connect'){payload.device_type=$('device-type').value;payload.serial=$('serial').value.trim();}
     const response=await fetch('/api/'+name,{method:'POST',headers:{'Content-Type':'application/json','X-Miao-Token':token},body:JSON.stringify(payload)});
     const result=await response.json();if(!response.ok)throw new Error(result.error||'操作失败');if(name==='shutdown'){toast('助手已退出，可以关闭此页面');return;}if(name==='configure')toast('执行设置已应用');await poll();
@@ -31,6 +33,22 @@ async function discover(){
     $('device-hint').textContent=data.devices.length?data.devices.map(d=>`${d.model||d.serial} · ${{device:'已连接',unauthorized:'请在手机允许 USB 调试',offline:'设备离线'}[d.status]||d.status}`).join('；'):(data.errors.join('；')||'暂未检测到设备。请检查数据线和 USB 调试，也可填入已连接的无线调试地址。');
   }catch(e){toast(e.message);}finally{$('discover').disabled=false;}
 }
+function renderInstances(busy){
+  const instances=state.app_instances||[], hash=JSON.stringify(instances);
+  if(hash!==instanceHash){instanceHash=hash;const select=$('app-instance');select.replaceChildren();for(const item of instances){const option=el('option','',item.label);option.value=item.id;select.append(option);}if(!instances.length){select.append(el('option','','未发现可用淘宝实例'));}queueOrder=queueOrder.filter(id=>instances.some(i=>i.id===id));if(!queueOrder.length&&instances.length)queueOrder=[state.selected_instance||instances[0].id];renderInstanceOptions(busy);}
+  $('app-instance').value=state.selected_instance||'';$('app-instance').disabled=busy||!instances.length;
+  $('refresh-instances').disabled=busy||!state.connected;$('sequence-instances').disabled=busy||instances.length<2;
+  $('instance-hint').textContent=(state.instance_warnings||[]).join('；')||'运行期间锁定所选实例；统计、失败记录与不可用应用分别保存，不读取账号信息。';
+  for(const element of $('instance-options').querySelectorAll('input,button'))element.disabled=busy||element.dataset.blocked==='true';
+  const results=$('instance-results');results.replaceChildren();const labels={pending:'等待执行',running:'执行中',finished:'本轮已结束',stopped:'已停止',needs_attention:'需要处理，队列已暂停',error:'异常，队列已停止'};
+  for(const item of state.instance_queue||[]){const line=el('div','instance-result '+item.status);line.append(el('span','',item.label),el('span','',`${labels[item.status]||item.status} · 核验 ${item.stats?.completed||0} 次`));results.append(line);}
+}
+function renderInstanceOptions(busy=false){
+  const list=$('instance-options');list.replaceChildren();const instances=state?.app_instances||[], ordered=[...queueOrder.map(id=>instances.find(i=>i.id===id)).filter(Boolean),...instances.filter(i=>!queueOrder.includes(i.id))];
+  for(const item of ordered){const row=el('div','instance-option'),label=el('label'),check=el('input');check.type='checkbox';check.checked=queueOrder.includes(item.id);check.disabled=busy;check.addEventListener('change',()=>{queueOrder=check.checked?[...queueOrder,item.id]:queueOrder.filter(id=>id!==item.id);renderInstanceOptions();});label.append(check,document.createTextNode(item.label));row.append(label);
+    for(const [delta,text] of [[-1,'↑'],[1,'↓']]){const button=el('button','text-button',text);button.type='button';button.setAttribute('aria-label',`${item.label} ${delta<0?'提前':'延后'}`);const index=queueOrder.indexOf(item.id);button.dataset.blocked=String(index<0||index+delta<0||index+delta>=queueOrder.length);button.disabled=busy||button.dataset.blocked==='true';button.addEventListener('click',()=>{const next=index+delta;[queueOrder[index],queueOrder[next]]=[queueOrder[next],queueOrder[index]];renderInstanceOptions();});row.append(button);}list.append(row);
+  }
+}
 function renderTasks(force=false){
   const tasks=state.tasks||[];const hash=JSON.stringify(tasks)+filter;if(!force&&hash===taskHash)return;taskHash=hash;$('task-count').textContent=tasks.length;
   const list=tasks.filter(t=>filter==='all'||(filter==='manual'?['manual','failed','disabled'].includes(t.status):!['manual','disabled'].includes(t.status)));
@@ -41,11 +59,11 @@ function renderTasks(force=false){
 function renderLogs(){const logs=state.logs||[];const hash=logs.length?String(logs[logs.length-1].id):'';if(hash===logsHash)return;logsHash=hash;const list=$('log-list');const atBottom=list.scrollTop+list.clientHeight>=list.scrollHeight-30;list.replaceChildren();for(const log of logs){const line=el('div','log-line '+log.level);line.append(el('time','',log.time.slice(11,19)),el('span','log-level',log.level),el('span','log-text',log.message));list.append(line);}if(atBottom)list.scrollTop=list.scrollHeight;}
 function render(){
   $('app-version').textContent=state.version||'';
-  const busy=busyStates.has(state.status)||state.busy,running=state.status==='running',paused=state.status==='paused';
+  const busy=busyStates.has(state.status)||state.busy;renderInstances(busy);const running=state.status==='running',paused=state.status==='paused';
   $('connection-label').className='status-pill'+(state.connected?' connected':'');$('connection-label').replaceChildren(el('span'),document.createTextNode(statusLabels[state.status]||state.status));
   $('connect').disabled=busy;$('connect').textContent=state.connected?'重新连接 ↗':'连接设备 ↗';
   for(const id of ['run','capture'])$(id).disabled=!state.connected||busy;
-  $('run').textContent=busy?'正在处理…':'▶ 开始自动执行';
+  $('run').textContent=busy?'正在处理…':$('sequence-instances').checked?'▶ 按顺序执行':'▶ 开始自动执行';if(!(state.app_instances||[]).length)$('run').disabled=true;
   $('pause').disabled=!running&&!paused;$('pause').textContent=paused?'▶ 继续':'Ⅱ 暂停';$('stop').disabled=!busy||state.status==='stopping';
   $('device-type').disabled=busy;$('serial').disabled=busy;
   $('save-settings').disabled=busy;
@@ -55,8 +73,8 @@ function render(){
   document.querySelector('.execution-card').classList.toggle('is-active',running);document.querySelector('.execution-card').classList.toggle('needs-attention',['error','needs_attention'].includes(state.status));
   const round=state.stats||{},daily=state.daily,stats=daily?.stats||{};
   for(const [id,key] of [['completed','completed'],['claims','claims'],['cross','cross_app'],['skipped','skipped'],['failed','failed']])$('stat-'+id).textContent=stats[key]||0;
-  $('daily-label').textContent=daily?`${daily.date} · 当前设备今日累计`:'连接后读取本设备今日统计';
-  $('daily-note').textContent=daily?`今日运行 ${clockText(stats.elapsed)} · 已确认不可用 ${daily.unavailable_count||0} 项 · 诊断记录 ${daily.failures_count||0} 条`:'同一设备当天累计保存，重新开始不会清零';
+  $('daily-label').textContent=daily?`${daily.date} · ${state.app_instances?.find(i=>i.id===state.selected_instance)?.label||'当前设备'} · 今日累计`:'连接后读取本设备今日统计';
+  $('daily-note').textContent=daily?`今日运行 ${clockText(stats.elapsed)} · 已确认不可用 ${daily.unavailable_count||0} 项 · 诊断记录 ${daily.failures_count||0} 条`:'同一设备、同一实例当天累计保存，重新开始不会清零';
   $('round-summary').textContent=`本轮 · 已尝试 ${round.attempts||0} 次 · 核验完成 ${round.completed||0} 次 · 领奖 ${round.claims||0} 次 · 未通过 ${round.failed||0} 项`;
   $('elapsed').textContent=`本轮运行 ${clockText(round.elapsed)}`;
   $('diagnostics').hidden=!daily;
@@ -65,7 +83,7 @@ function render(){
   const failureTitle=typeof failureTask==='string'?failureTask:failureTask?.title;
   $('last-failure').textContent=state.last_failure?`最近记录：${state.last_failure.reason||'执行未通过'}${failureTitle?' · '+failureTitle:''}`:'遇到验证、恢复失败或核验失败时记录现场，原始截图仅保存在本机。';
   $('package-name').textContent=state.package||'设备未连接';$('preview-source').textContent=state.source==='ocr'?'本地 OCR 识别':state.source==='ui'?'页面控件识别':'手机截图预览';
-  if(!initialized){const c=state.config;$('browse-seconds').value=c.default_browse_seconds;$('browse-extra').value=c.browse_extra_seconds;$('max-attempts').value=c.max_attempts;$('max-tasks').value=c.max_tasks;$('cross-app').checked=c.allow_cross_app;$('ocr').checked=c.ocr;$('scroll').checked=c.scroll_browse;$('claim').checked=c.claim_rewards;for(const k of ['browse','search','visit','claim'])$('kind-'+k).checked=(c.enabled_task_kinds||['browse','search','visit','claim']).includes(k);initialized=true;}
+  if(!initialized){const c=state.config;for(const name of ['distance','duration','interval','burst'])for(const bound of ['min','max'])$('swipe-'+name+'-'+bound).value=Number((c['swipe_'+name+'_'+bound]*(name==='distance'?100:1)).toFixed(3));$('browse-seconds').value=c.default_browse_seconds;$('browse-extra').value=c.browse_extra_seconds;$('max-attempts').value=c.max_attempts;$('max-tasks').value=c.max_tasks;$('cross-app').checked=c.allow_cross_app;$('ocr').checked=c.ocr;$('scroll').checked=c.scroll_browse;$('claim').checked=c.claim_rewards;for(const k of ['browse','search','visit','claim'])$('kind-'+k).checked=(c.enabled_task_kinds||['browse','search','visit','claim']).includes(k);initialized=true;}
   renderTasks();renderLogs();preview();
 }
 async function poll(){
@@ -95,6 +113,9 @@ document.addEventListener('visibilitychange',()=>{clearTimeout(pollTimer);clearT
 window.addEventListener('pagehide',()=>{pageActive=false;clearTimeout(pollTimer);clearTimeout(previewTimer);});
 window.addEventListener('pageshow',event=>{if(event.persisted){pageActive=true;pollLoop();previewLoop();}});
 for(const id of ['connect','run','capture','stop'])$(id).addEventListener('click',()=>action(id));
+$('app-instance').addEventListener('change',()=>action('select_instance',{instance_id:$('app-instance').value}));
+$('refresh-instances').addEventListener('click',()=>action('refresh_instances'));
+$('sequence-instances').addEventListener('change',()=>{$('instance-options').hidden=!$('sequence-instances').checked;if($('sequence-instances').checked){document.querySelector('input[name=mode][value=auto]').checked=true;}renderInstanceOptions();if(state)render();});
 $('pause').addEventListener('click',()=>action(state?.status==='paused'?'resume':'pause'));
 $('save-settings').addEventListener('click',()=>action('configure'));
 $('shutdown').addEventListener('click',()=>action('shutdown'));

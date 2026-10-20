@@ -1,5 +1,6 @@
 """Loopback-only control panel; a single background worker owns the phone."""
 import copy
+from contextlib import nullcontext
 from dataclasses import asdict
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -20,6 +21,7 @@ import webbrowser
 
 from modules.campaign import CampaignRunner, NeedsAttention, RunControl, RunStats, Stopped, load_config, validate_config
 from modules.daily_state import DailyState, local_day
+from modules.app_instances import AppInstance, InstanceMismatch
 from modules.notifications import notify_security_attention
 from modules.runtime import data_dir, version
 
@@ -94,6 +96,7 @@ class Controller:
         self._preview_thread = None
         self._preview_stop = threading.Event()
         self._preview_last = 0.0
+        self._last_client_seen = time.monotonic()
         self._round_last_stats = {}
         self._last_failure_stamp = 0.0
         # The same dictionary remains attached to an active runner across a day
@@ -103,7 +106,8 @@ class Controller:
                           message='连接手机后，点击开始执行自动进入活动并识别任务', package='', source='',
                           current_task='', remaining=0, stats=asdict(RunStats()), tasks=[],
                           config=config or load_config(), device={}, logs=[], updated_at='',
-                          daily=None, last_failure=None, image_sequence=0, image_updated_at='')
+                          daily=None, last_failure=None, image_sequence=0, image_updated_at='',
+                          app_instances=[], selected_instance='', instance_warnings=[], instance_queue=[])
 
     def log(self, level, message):
         with self.lock:
@@ -145,11 +149,14 @@ class Controller:
             identity = getattr(device, 'identity_serial', None)
             if not isinstance(identity, str) or not identity:
                 identity = device.serial
+            target = getattr(device, 'selected_instance', None)
+            instance_id = target.id if isinstance(target, AppInstance) else ''
             if (self.daily is not None and self.daily.date == date
-                    and self.daily.serial == identity and self.daily.device_type == device.device_type):
+                    and self.daily.serial == identity and self.daily.device_type == device.device_type
+                    and self.daily.instance_id == instance_id):
                 self.daily.redaction_values.add(device.serial)
                 return False
-            self.daily = DailyState(data_dir(), identity, device.device_type, date)
+            self.daily = DailyState(data_dir(), identity, device.device_type, date, instance_id=instance_id)
             self.daily.redaction_values.add(device.serial)
             self.unavailable_tasks.clear()
             self.unavailable_tasks.update(self.daily.unavailable_tasks())
@@ -174,6 +181,11 @@ class Controller:
         previous = self._round_last_stats.get(session_id, {})
         self._ensure_daily()
         self.update(**event)
+        if 'stats' in event:
+            with self.lock:
+                for item in self.state['instance_queue']:
+                    if item['status'] == 'running':
+                        item['stats'] = copy.deepcopy(event['stats'])
         with self._daily_lock:
             if self.daily:
                 summary = self.daily.progress(
@@ -213,6 +225,10 @@ class Controller:
 
     def _preview_loop(self):
         while not self._preview_stop.wait(.05):
+            if time.monotonic() - self._last_client_seen > 5:
+                # Closed browser tabs have no preview consumer. The task worker
+                # still makes its own observations; idle phones stop capturing.
+                continue
             if time.monotonic() - self._preview_last < .35:
                 continue
             with self.lock:
@@ -276,7 +292,7 @@ class Controller:
             else:
                 if self.thread and self.thread.is_alive():
                     raise ValueError('设备正在执行操作，请先停止当前任务')
-                if action not in ('connect', 'scan', 'run', 'capture', 'configure'):
+                if action not in ('connect', 'scan', 'run', 'capture', 'configure', 'select_instance', 'refresh_instances'):
                     raise ValueError('未知操作')
                 if action not in ('connect', 'configure') and self.device is None:
                     raise ValueError('请先连接设备')
@@ -286,12 +302,29 @@ class Controller:
                     raise ValueError('配置字段无效')
                 config.update(overrides)
                 validate_config(config)
+                if action in ('run', 'scan', 'select_instance') and isinstance(getattr(self.device, 'app_instances', None), list) and not self.state['app_instances']:
+                    raise ValueError('未发现可用淘宝实例，请安装淘宝或刷新实例列表后重试')
+                if action in ('run', 'scan') and not isinstance(payload.get('auto_open', True), bool):
+                    raise ValueError('auto_open 必须为布尔值')
+                if action in ('run', 'scan', 'select_instance') and self.state['app_instances']:
+                    known = {item['id'] for item in self.state['app_instances']}
+                    ids = payload.get('instance_ids', [payload.get('instance_id') or self.state['selected_instance']])
+                    if (not isinstance(ids, list) or not 1 <= len(ids) <= 16
+                            or any(not isinstance(i, str) or i not in known for i in ids)
+                            or len(ids) != len(set(ids))):
+                        raise ValueError('请选择有效且不重复的淘宝实例')
+                    if action != 'run' and len(ids) != 1:
+                        raise ValueError('本操作只能选择一个实例')
+                    if len(ids) > 1 and not payload.get('auto_open', True):
+                        raise ValueError('顺序执行多个实例必须使用自动进入活动')
+                    payload = dict(payload, instance_ids=ids)
                 if action == 'configure':
                     self.update(config=config)
                 else:
                     self.control = RunControl()
                     self.update(config=config, status={'connect': 'connecting', 'scan': 'scanning',
-                                                      'run': 'running', 'capture': 'scanning'}[action],
+                                                      'run': 'running', 'capture': 'scanning',
+                                                      'select_instance': 'scanning', 'refresh_instances': 'scanning'}[action],
                                 message='正在连接手机' if action == 'connect' else '正在读取手机页面')
                     self.thread = threading.Thread(target=self._work, args=(action, payload, config), daemon=True,
                                                    name='miao-device-worker')
@@ -321,7 +354,8 @@ class Controller:
                     self.state['logs'] = []
                 self.update(connected=False, device={}, daily=None, last_failure=None,
                             package='', source='', tasks=[], stats=asdict(RunStats()),
-                            current_task='', remaining=0, phase='connecting')
+                            current_task='', remaining=0, phase='connecting', app_instances=[],
+                            selected_instance='', instance_warnings=[], instance_queue=[])
                 kind = payload.get('device_type', 'uiautomator2')
                 serial = payload.get('serial') or None
                 if kind not in ('uiautomator2', 'hmdriver2') or (serial and (not isinstance(serial, str) or len(serial) > 128)):
@@ -335,37 +369,67 @@ class Controller:
                 self._ensure_daily()
                 self.update(connected=True, device=dict(type=kind, serial=device.serial or '自动选择'),
                             package=info.get('package', ''), status='ready', phase='ready',
-                            tasks=[], message='设备已连接，点击开始执行将自动打开活动并识别任务')
+                            app_instances=[i.to_dict() for i in device.app_instances],
+                            selected_instance=device.selected_instance.id if device.selected_instance else '',
+                            instance_warnings=device.instance_warnings,
+                            tasks=[], message='设备已连接，请确认淘宝实例后开始自动执行')
                 self._start_preview()
                 self.log('INFO', f'设备连接成功：{device}')
             elif action == 'capture':
                 self.control.check()
                 self.on_image(self.device.screenshot())
                 self.update(status='ready', message='手机画面已刷新')
-            else:
+            elif action == 'refresh_instances':
+                self.control.check()
+                instances = self.device.refresh_app_instances()
                 self._ensure_daily()
-                session_id = uuid.uuid4().hex
-                self._round_last_stats[session_id] = {}
-                self.update(stats=asdict(RunStats()))
-                runner = CampaignRunner(
-                    self.device, config, self.control,
-                    lambda **event: self._runner_event(session_id, action == 'run', **event), self.on_image,
-                    unavailable_tasks=self.unavailable_tasks, on_failure=self.on_failure)
+                self.update(app_instances=instances,
+                            selected_instance=self.device.selected_instance.id if self.device.selected_instance else '',
+                            instance_warnings=self.device.instance_warnings, instance_queue=[],
+                            status='ready', phase='ready', tasks=[], current_task='', stats=asdict(RunStats()),
+                            message='实例列表已刷新；未读取任何账号登录信息')
+            elif action == 'select_instance':
+                self._select_instance(payload['instance_ids'][0])
+                self.update(status='ready', phase='ready', instance_queue=[], message='已选择实例，开始后才会打开对应淘宝')
+            else:
                 auto_open = payload.get('auto_open', True)
                 if not isinstance(auto_open, bool):
                     raise ValueError('auto_open 必须为布尔值')
-                self.log('INFO', '开始识别任务' if action == 'scan' else '开始执行任务')
-                if action == 'scan':
-                    runner.scan(auto_open=auto_open)
-                    self.update(status='ready')
-                else:
-                    runner.run(auto_open=auto_open)
-                    self.update(status='finished')
+                ids = payload.get('instance_ids') or [self.state['selected_instance'] or None]
+                known = {i['id']: i for i in self.state['app_instances']}
+                self.update(instance_queue=[dict(id=i, label=known.get(i, {}).get('label', '当前应用'),
+                                                 status='pending', stats={}) for i in ids])
+                for instance_id in ids:
+                    self.control.check()
+                    if instance_id:
+                        self._select_instance(instance_id)
+                    self._ensure_daily()
+                    self._queue_status(instance_id, 'running')
+                    session_id = uuid.uuid4().hex
+                    self._round_last_stats[session_id] = {}
+                    self.update(stats=asdict(RunStats()), status='running' if action == 'run' else 'scanning')
+                    runner = CampaignRunner(
+                        self.device, config, self.control,
+                        lambda **event: self._runner_event(session_id, action == 'run', **event), self.on_image,
+                        unavailable_tasks=self.unavailable_tasks, on_failure=self.on_failure)
+                    self.log('INFO', ('开始识别任务' if action == 'scan' else '开始执行任务') +
+                             ('：' + known[instance_id]['label'] if instance_id in known else ''))
+                    context = self.device.instance_session() if instance_id else nullcontext()
+                    with context:
+                        if action == 'scan':
+                            runner.scan(auto_open=auto_open)
+                        else:
+                            runner.run(auto_open=auto_open)
+                    self._persist_state()
+                    self._queue_status(instance_id, 'finished')
                     self._save_report()
+                self.update(status='ready' if action == 'scan' else 'finished')
         except Stopped:
+            self._finish_active_queue('stopped')
             self.interrupt_records('已停止，本次进度尚未核验')
             self.update(status='stopped', phase='stopped', message='已停止，可从当前页面重新开始', remaining=0)
-        except NeedsAttention as exc:
+        except (NeedsAttention, InstanceMismatch) as exc:
+            self._finish_active_queue('needs_attention')
             self.interrupt_records('需要手动处理后重新核验')
             self.log('WARNING', str(exc))
             self.update(status='needs_attention', phase='needs_attention', message=str(exc), remaining=0)
@@ -374,6 +438,7 @@ class Controller:
             if exc.kind == 'security':
                 notify_security_attention()
         except Exception as exc:
+            self._finish_active_queue('error')
             self.interrupt_records('执行中断，本次进度尚未核验')
             logger.exception('设备操作失败')
             self.update(status='error', phase='connect_failed' if action == 'connect' else 'error',
@@ -391,6 +456,25 @@ class Controller:
                     self._save_report()
                 except Exception:
                     logger.exception('保存本地当天记录失败')
+
+    def _select_instance(self, instance_id):
+        self.control.check()
+        target = self.device.select_app_instance(instance_id)
+        self._ensure_daily()
+        self.update(selected_instance=target.id, tasks=[], current_task='', remaining=0,
+                    last_failure=None, stats=asdict(RunStats()))
+
+    def _queue_status(self, instance_id, status):
+        with self.lock:
+            for item in self.state['instance_queue']:
+                if item['id'] == instance_id:
+                    item['status'] = status
+
+    def _finish_active_queue(self, status):
+        with self.lock:
+            for item in self.state['instance_queue']:
+                if item['status'] == 'running':
+                    item['status'] = status
 
     def interrupt_records(self, reason):
         with self.lock:
@@ -435,6 +519,7 @@ def make_handler(controller, token):
                 return
             path = urlsplit(self.path).path
             if path == '/api/state':
+                controller._last_client_seen = time.monotonic()
                 self.reply(200, dict(controller.snapshot(), token=token, version=version(),
                                      busy=bool(controller.thread and controller.thread.is_alive())))
             elif path == '/api/health':
@@ -532,14 +617,27 @@ def serve(port=8765, open_browser=True, config=None, port_file=None):
         Path(port_file).write_text(json.dumps({'url': url}), encoding='utf-8')
     if sys.stdout is not None:
         print(f'双11任务助手已启动：{url}\n按 Ctrl+C 退出。')
-    if open_browser:
-        webbrowser.open(url)
+    from modules.windows_tray import WindowsTray
+    def exit_service():
+        controller.control.stopped.set()
+        controller._preview_stop.set()
+        controller.update(status='stopping', message='正在停止任务并退出助手')
+        server.shutdown()
+    tray = WindowsTray(lambda: webbrowser.open(url), exit_service)
     try:
+        tray_active = tray.start()
+        controller.update(tray_enabled=tray_active)
+        if open_browser:
+            webbrowser.open(url)
         server.serve_forever(poll_interval=.3)
     except KeyboardInterrupt:
         controller.control.stopped.set()
     finally:
+        controller.control.stopped.set()
         controller._preview_stop.set()
+        if controller.thread and controller.thread is not threading.current_thread():
+            controller.thread.join(25)
+        tray.stop()
         try:
             controller._persist_state()
         except Exception:
