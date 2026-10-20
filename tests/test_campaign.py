@@ -344,6 +344,19 @@ class RunnerTests(unittest.TestCase):
             screen = Screen([button], 1440, 3200, r.origin, 'ocr')
             self.assertIs(r.task_panel_entry(screen), button, caption)
 
+    def test_specific_energy_caption_takes_priority_over_generic_task_caption(self):
+        r = self.clock_runner()
+        button = node('去赚能量', 1150, 1200, 250)
+        screen = Screen([node('做任务', 40, 1600, 250), button], 1440, 3200, r.origin, 'ocr')
+        self.assertIs(r.task_panel_entry(screen), button)
+
+    def test_hero_control_band_takes_priority_over_same_caption_in_product_area(self):
+        r = self.clock_runner()
+        button = node('去赚能量', 1150, 1200, 250)
+        screen = Screen([node('赚能量', 800, 1900, 250), node('升级赛车拿钱', 450, 1200, 500),
+                         button], 1440, 3200, r.origin, 'ocr')
+        self.assertIs(r.task_panel_entry(screen), button)
+
     def test_menu_containment_does_not_match_heading_or_task_descriptions(self):
         r = self.clock_runner()
         for caption in ('做任务赚能量', '做任务赚能量，按钮', '浏览赚能量', '去完成赚能量',

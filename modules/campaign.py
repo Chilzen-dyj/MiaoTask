@@ -319,7 +319,7 @@ class CampaignRunner:
                                       (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3])),
                                       'ocr-joined'))
         matches = []
-        for label in self.config['task_entry_labels']:
+        for priority, label in enumerate(self.config['task_entry_labels']):
             # This is the opened sheet's heading, never a button on this campaign.
             if normalize(label) == '做任务赚能量':
                 continue
@@ -334,8 +334,9 @@ class CampaignRunner:
                              anchor and abs(target.center[1] - anchor.center[1]) < screen.height * .12)
                         and 0 < target.bounds[2] - target.bounds[0] < screen.width * .7
                         and 0 < target.bounds[3] - target.bounds[1] < screen.height * .2):
-                    matches.append((text != caption, len(text), target))
-        return min(matches, key=lambda item: item[:2])[2] if matches else None
+                    outside_band = bool(anchor and abs(target.center[1] - anchor.center[1]) >= screen.height * .12)
+                    matches.append((priority, outside_band, text != caption, len(text), target))
+        return min(matches, key=lambda item: item[:4])[4] if matches else None
 
     def menu_visual_fallback(self, screen):
         """Re-read the visible control band at native resolution, without swipes."""
