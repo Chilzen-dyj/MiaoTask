@@ -6,6 +6,18 @@
 
 **[下载 Windows ZIP](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11/releases/latest)** · **[使用说明](docs/USAGE.md)** · **[发布记录](docs/RELEASES.md)**
 
+## 开发&反馈 Q 群：1103989184
+
+#### 已知的一些问题（大家如果使用中遇到一些问题可以在 issues 发一下截图、手机型号和问题，手里只有小米、荣耀机型，这两天会借个鸿蒙试试）：
+
+- [x] 兼容“赚能量 / 去赚能量”，增加同页重新定位与有限重试，用户实测入口通过；更多机型欢迎反馈。
+- [ ] 如果进入淘宝时候出现动画弹窗，可能无法正常启动任务，需要手动关闭或者再次启动重进就行，后续会考虑检测弹窗控件关闭；
+- [x] 已增加滑动覆盖区域、时长和间隔的随机范围，本次完整运行未遇到人工验证；这不保证规避风控，仍可能出现认证，遇到后需本人处理，欢迎反馈脱敏案例。
+- [ ] 一些零散的任务需要用户自己做，没办法识别到所有的带“600”字样的按钮，为了防止一些逻辑冲突，暂时不做零散任务。
+- [ ] 鸿蒙的适配在做了在做了，估计要明后天发版，先把一些细小的逻辑问题修完再做适配；
+- [ ] 跳转其他应用再回来小概率bug（链式跳转导致跳不回来），目前会重启淘宝的方式解决，后续会研究下逻辑看有没有更好的解决方法；
+- [x] 希望大家给个 star， 有问题多反馈😋欢迎提交 issues 和 pr ！
+
 ## 开始使用
 
 1. 在 Releases 的 **Assets** 下载 Windows x64 ZIP，完整解压，保留 `_internal/`。
@@ -47,7 +59,7 @@
 
 ## 来源与差异
 
-基于 [MonsterNone/tmall-miao 的 next 分支](https://github.com/MonsterNone/tmall-miao/tree/9318d3d138d5fa53cff00601740de012da831c65)改造，感谢原作者及贡献者。以下以上述来源提交为基准，不代表上游之后的版本；权利归属见[来源说明](docs/ATTRIBUTION.md)。
+基于 [MonsterNone/tmall-miao 的 next 分支](https://github.com/MonsterNone/tmall-miao/tree/9318d3d138d5fa53cff00601740de012da831c65)改造，感谢原作者及贡献者。以下以上述来源提交为基准，不代表上游之后的版本；本项目保留上游来源与权利归属，第三方许可随便携包保存在 `licenses/`。
 
 | 方面 | 上游来源版本 | 本项目 |
 | --- | --- | --- |
@@ -67,8 +79,7 @@
 
 欢迎在 Issues 提供版本、机型、系统、任务名称、复现步骤和脱敏截图。诊断原图可能含个人信息，分享前请检查。
 
-开发与反馈 QQ 群：1103989184。
 
 ## 文档
 
-[使用](docs/USAGE.md) · [开发与设计](docs/DEVELOPMENT.md) · [贡献规范](docs/CONTRIBUTING.md) · [测试与打包](docs/BUILDING.md) · [发布记录](docs/RELEASES.md) · [风险与隐私](docs/SAFETY.md) · [来源与图标](docs/ATTRIBUTION.md)
+[使用](docs/USAGE.md) · [开发与设计](docs/DEVELOPMENT.md) · [贡献规范](docs/CONTRIBUTING.md) · [测试与打包](docs/BUILDING.md) · [发布记录](docs/RELEASES.md) · [风险与隐私](docs/SAFETY.md)

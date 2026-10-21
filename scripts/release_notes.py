@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def extract_notes(text, version):
-    if not re.fullmatch(r'v[A-Za-z0-9._-]+', version):
+    if not re.fullmatch(r'(?:MiaoTask-)?v[A-Za-z0-9._-]+', version):
         raise ValueError('Invalid version')
     sections = list(re.finditer(r'^##[ \t]+([^\r\n]+)[ \t]*\r?$', text, re.M))
     matches = [index for index, item in enumerate(sections) if item.group(1).strip() == version]

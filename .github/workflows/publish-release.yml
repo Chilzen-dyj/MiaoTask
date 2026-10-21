@@ -6,7 +6,6 @@ on:
       tag:
         description: Existing version tag to publish
         required: true
-        default: v20261018-double11.3
       build_run_id:
         description: Successful Build Windows portable release run ID
         required: true
@@ -23,6 +22,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
       - name: Verify and publish the exact tag's build
         shell: pwsh
         env:
@@ -31,7 +33,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
           BUILD_RUN_ID: ${{ inputs.build_run_id }}
         run: |
-          if ($env:RELEASE_TAG -notmatch '^v[A-Za-z0-9._-]+$') { throw 'Invalid tag' }
+          if ($env:RELEASE_TAG -notmatch '^MiaoTask-v[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Invalid tag' }
           if ($env:BUILD_RUN_ID -notmatch '^\d+$') { throw 'Invalid build run ID' }
           $revision = (& git rev-parse HEAD).Trim()
           $build = (& gh api "repos/$env:GH_REPO/actions/runs/$env:BUILD_RUN_ID" | ConvertFrom-Json)
@@ -41,7 +43,7 @@ jobs:
           }
           & gh run download $env:BUILD_RUN_ID --name MiaoTask-windows-x64 --dir release-assets
           if ($LASTEXITCODE -ne 0) { throw 'Artifact download failed' }
-          $zipName = "MiaoTask-$env:RELEASE_TAG-windows-x64.zip"
+          $zipName = "$($env:RELEASE_TAG)-windows-x64.zip"
           $zipPath = Join-Path release-assets $zipName
           $sumPath = $zipPath + '.sha256'
           $expectedHash = ((Get-Content -LiteralPath $sumPath -Raw).Trim() -split '\s+')[0]
@@ -57,11 +59,9 @@ jobs:
           if ($manifest.source_commit -ne $revision -or $manifest.version -ne $env:RELEASE_TAG -or -not $manifest.smoke_test_passed) {
             throw 'Portable package provenance mismatch'
           }
-          $notesPath = Join-Path docs "RELEASE-$env:RELEASE_TAG.md"
-          $notes = Get-Content -LiteralPath $notesPath -Raw
-          $notes += "`n`n## 本次构建`n`n源码提交：$revision`n`nZIP SHA256：$actualHash`n"
           $publicNotes = Join-Path $env:RUNNER_TEMP 'miao-release-notes.md'
-          [IO.File]::WriteAllText($publicNotes, $notes, [Text.UTF8Encoding]::new($false))
+          python scripts/release_notes.py $env:RELEASE_TAG --output $publicNotes
+          if ($LASTEXITCODE -ne 0) { throw 'Reviewed release notes are required' }
           $releaseJson = & gh release view $env:RELEASE_TAG --json isDraft 2>$null
           if ($LASTEXITCODE -eq 0) {
             $release = $releaseJson | ConvertFrom-Json
@@ -70,7 +70,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'Release asset upload failed' }
             & gh release edit $env:RELEASE_TAG --draft=false --latest --notes-file $publicNotes
           } else {
-            & gh release create $env:RELEASE_TAG $zipPath $sumPath --verify-tag --latest --title "$env:RELEASE_TAG · 双11任务助手 Windows 便携版" --notes-file $publicNotes
+            & gh release create $env:RELEASE_TAG $zipPath $sumPath --verify-tag --latest --title ($env:RELEASE_TAG -replace '^MiaoTask-', 'MiaoTask ') --notes-file $publicNotes
           }
           if ($LASTEXITCODE -ne 0) { throw 'Publishing failed' }
           & gh release view $env:RELEASE_TAG --json url,isDraft,assets

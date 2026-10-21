@@ -54,10 +54,10 @@ python -m venv build/release-env
 
 构建器先审计、运行用例，再从新目录执行 PyInstaller，包含当前入口可达代码、网页、公共配置、离线 OCR、ADB 和第三方许可。不会整体压缩项目目录或携带开发虚拟环境、个人日志、设备配置、旧 exe 和手机截图。
 
-输出为 `dist/MiaoTask-<version>-windows-x64.zip`。包内包含：
+输出为 `dist/<version>-windows-x64.zip`。包内包含：
 
 * `MiaoTask.exe` 和 `_internal/` 运行环境。
-* `README.md`、`docs/` 使用、风险、来源和发布说明，以及 `licenses/`。
+* `README.md`、`docs/` 使用、风险和发布说明，以及 `licenses/`。
 * `build-manifest.json` 的源码提交与依赖信息，`self-test.json` 的离线自检结果。
 
 ## 检查实际 ZIP
@@ -68,11 +68,15 @@ python -m venv build/release-env
 $releaseVersion = (Get-Content version.json -Raw | ConvertFrom-Json).version
 $verifyFolder = "dist/verify-$releaseVersion"
 if (Test-Path -LiteralPath $verifyFolder) { throw '请改用新的验证目录' }
-Expand-Archive -LiteralPath "dist/MiaoTask-$releaseVersion-windows-x64.zip" -DestinationPath $verifyFolder
+Expand-Archive -LiteralPath "dist/$releaseVersion-windows-x64.zip" -DestinationPath $verifyFolder
 .\build\release-env\Scripts\python.exe scripts/smoke_packaged.py "$verifyFolder/MiaoTask/MiaoTask.exe"
 ```
 
 自检会从 PATH 中移除 Python / ADB，检查内置 ADB、离线 OCR、图标、HTTP、浏览器来源头、重复启动和退出，不操作手机。另检查随包文档和构建清单与发布提交一致；升级、托盘和涉及手机的变更按影响范围补充检查。SHA256 为可选完整性附件。
+
+## 版本规则
+
+版本与标签使用 `MiaoTask-v0.0.9` 形式，去掉日期和活动限定；两个版本字段保持一致。功能优化递增末位（如 `0.0.9 → 0.0.10`），架构升级或扩展应用递增中位（如 `0.0.x → 0.1.0`）。下一次 `0.1.0` 只调整架构，保持当前功能和配置兼容；暂不规划 `1.0.0` 定稿版本。历史标签保留。
 
 ## 发布
 

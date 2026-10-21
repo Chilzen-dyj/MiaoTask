@@ -16,6 +16,8 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertIn('### Details', body)
         self.assertNotIn('Old behavior', body)
         self.assertEqual(extract_notes(text, 'v1'), 'Old behavior\n')
+        branded = '## MiaoTask-v0.0.90\nOther release\n## MiaoTask-v0.0.9\nRequested release\n'
+        self.assertEqual(extract_notes(branded, 'MiaoTask-v0.0.9'), 'Requested release\n')
 
     def test_missing_duplicate_empty_and_invalid_versions_are_rejected(self):
         cases = [
@@ -29,7 +31,10 @@ class ReleaseNotesTests(unittest.TestCase):
                 extract_notes(text, version)
 
     def test_configured_version_has_a_single_reviewable_release_section(self):
-        version = json.loads((ROOT / 'version.json').read_text(encoding='utf-8'))['version']
+        metadata = json.loads((ROOT / 'version.json').read_text(encoding='utf-8'))
+        version = metadata['version']
+        self.assertRegex(version, r'^MiaoTask-v\d+\.\d+\.\d+$')
+        self.assertEqual(version, metadata['app_version'])
         notes = extract_notes((ROOT / 'docs/RELEASES.md').read_text(encoding='utf-8'), version)
         self.assertIn('MiaoTask', notes)
 

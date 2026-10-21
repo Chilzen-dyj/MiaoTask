@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     tags:
-      - 'v*'
+      - 'MiaoTask-v*'
 
 permissions:
   contents: read
@@ -49,7 +49,7 @@ jobs:
           retention-days: 14
 
   draft-release:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/MiaoTask-v')
     needs: build
     runs-on: windows-latest
     permissions:
@@ -70,7 +70,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          if ($env:RELEASE_TAG -notmatch '^v[A-Za-z0-9._-]+$') { throw 'Invalid tag name' }
+          if ($env:RELEASE_TAG -notmatch '^MiaoTask-v[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Invalid tag name' }
           $existingRelease = & gh release view $env:RELEASE_TAG --json isDraft 2>$null
           if ($LASTEXITCODE -eq 0) {
             Write-Host 'A release already exists for this tag; retaining its reviewed assets.'
@@ -80,5 +80,5 @@ jobs:
           $notesFile = "$env:RUNNER_TEMP/miao-release-notes.md"
           python scripts/release_notes.py $env:RELEASE_TAG --output $notesFile
           if ($LASTEXITCODE -ne 0) { throw 'Reviewed release notes are required' }
-          & gh release create $env:RELEASE_TAG @releaseFiles --draft --notes-file $notesFile --title "MiaoTask $env:RELEASE_TAG"
+          & gh release create $env:RELEASE_TAG @releaseFiles --draft --notes-file $notesFile --title ($env:RELEASE_TAG -replace '^MiaoTask-', 'MiaoTask ')
           if ($LASTEXITCODE -ne 0) { throw 'Draft release creation failed' }

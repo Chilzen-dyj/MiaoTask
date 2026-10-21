@@ -27,3 +27,5 @@ ADB / 设备自动化驱动可以操作手机，USB 调试不是只读屏幕权�
 公开前遮挡序列号、昵称、头像、金额、搜索历史与个人路径；不要提交完整原始录屏、登录凭据或调试私钥。源码和发布包不携带开发者设备的缺失应用结论。
 
 `.gitignore` 与公开文件审计用于排除本地数据和凭据，图片仍需人工视觉审核，操作方式见[测试与打包文档](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11/blob/main/docs/BUILDING.md)。
+
+第三方组件的许可与通知保存在便携包 `licenses/`。原项目来源见[项目首页](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11#来源与差异)；保留上游及第三方组件的权利归属，不为上游代码另行声明新的许可证。

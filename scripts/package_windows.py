@@ -14,7 +14,7 @@ import sys
 import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
-PORTABLE_DOCS = ('USAGE.md', 'SAFETY.md', 'ATTRIBUTION.md', 'RELEASES.md')
+PORTABLE_DOCS = ('USAGE.md', 'SAFETY.md', 'RELEASES.md')
 
 
 def copy_documentation(destination):
@@ -27,7 +27,7 @@ def copy_documentation(destination):
         '# MiaoTask\n\n'
         '双击 `MiaoTask.exe`，保留 `_internal/`。升级前先退出旧助手。\n\n'
         '[使用说明](docs/USAGE.md) · [风险与隐私](docs/SAFETY.md) · '
-        '[发布记录](docs/RELEASES.md) · [来源说明](docs/ATTRIBUTION.md)\n',
+        '[发布记录](docs/RELEASES.md)\n',
         encoding='utf-8')
 
 
@@ -80,7 +80,7 @@ def main():
     if not args.skip_tests:
         subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-q'], cwd=ROOT, check=True)
     version = json.loads((ROOT / 'version.json').read_text(encoding='utf-8'))['version']
-    if not re.fullmatch(r'[A-Za-z0-9._-]+', version):
+    if not re.fullmatch(r'MiaoTask-v[0-9]+\.[0-9]+\.[0-9]+', version):
         raise SystemExit('Invalid release version')
     stamp = datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S-%f')
     dist = (ROOT / 'dist' / f'windows-{stamp}').resolve()
@@ -106,7 +106,7 @@ def main():
                     adb_bundled=True, hdc_bundled=(package / '_internal/tools/hdc.exe').exists(),
                     offline_models=True, smoke_test_passed=True)
     (package / 'build-manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
-    archive = ROOT / 'dist' / f'MiaoTask-{version}-windows-x64.zip'
+    archive = ROOT / 'dist' / f'{version}-windows-x64.zip'
     with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as bundle:
         for path in sorted(package.rglob('*')):
             if path.is_file():
