@@ -6,12 +6,12 @@ from unittest.mock import Mock
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from modules.campaign import CampaignRunner, NeedsAttention, RunControl, Stopped, TaskUnavailable, load_config, validate_config
-from modules.control_panel import Controller, LocalHTTPServer, make_handler, serve
-from modules.device_adapter import DeviceAdapter
-from modules.app_instances import AppInstance, InstanceMismatch
-from modules.screen_reader import Screen, ScreenReader
-from modules.task_model import TextNode, is_task_list, normalize, parse_tasks
+from backend.app.taobao.activities.double11.activity import CampaignRunner, NeedsAttention, RunControl, Stopped, TaskUnavailable, load_config, validate_config
+from backend.core.service.panel import Controller, LocalHTTPServer, make_handler, serve
+from backend.core.device.adapter import DeviceAdapter
+from backend.core.device.instances import AppInstance, InstanceMismatch
+from backend.core.device.screen import Screen, ScreenReader
+from backend.app.taobao.activities.double11.tasks import TextNode, is_task_list, normalize, parse_tasks
 
 
 def node(text, x, y, width=400, height=65):
@@ -588,7 +588,7 @@ class RunnerTests(unittest.TestCase):
         r.ensure_list = Mock(return_value=before)
         r.execute = Mock(side_effect=OSError('temporary page RPC failure'))
         r.read = Mock(return_value=after)
-        with self.assertLogs('modules.campaign', level='ERROR'):
+        with self.assertLogs('backend.execution', level='ERROR'):
             result = r.run(auto_open=True)
         r.device.restart_app.assert_not_called()
         self.assertEqual(result['attempts'], 1)
@@ -624,7 +624,7 @@ class RunnerTests(unittest.TestCase):
         r = self.clock_runner()
         r.ensure_list = Mock(return_value=task_screen())
         def failed_navigation(*args):
-            r._restart_taobao(r.origin)
+            r._restart_app(r.origin)
             raise NeedsAttention('仍无法恢复任务列表', kind='navigation', evidence_saved=True)
         r.execute = Mock(side_effect=failed_navigation)
         with self.assertRaises(NeedsAttention):
@@ -638,7 +638,7 @@ class RunnerTests(unittest.TestCase):
         r.ensure_list = Mock(return_value=panel)
         r.read = Mock(return_value=panel)
         r.device.swipe.side_effect = OSError('temporary swipe failure')
-        with self.assertLogs('modules.campaign', level='ERROR'):
+        with self.assertLogs('backend.execution', level='ERROR'):
             result = r.run(auto_open=True)
         r.device.restart_app.assert_not_called()
         self.assertEqual(result['attempts'], 0)

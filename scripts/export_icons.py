@@ -13,7 +13,7 @@ ICO_SIZES = (16, 20, 24, 32, 40, 48, 64, 128, 256)
 
 
 def export_icons(folder=None):
-    folder = Path(folder or ROOT / 'web/assets')
+    folder = Path(folder or ROOT / 'frontend/assets')
     with Image.open(folder / 'miaotask-master.png') as master:
         master = master.convert('RGBA')
         if master.width != master.height:

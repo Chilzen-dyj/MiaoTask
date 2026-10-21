@@ -58,7 +58,8 @@ credentials.json
 service-account*.json
 
 # Build output and downloaded runtimes: distribute through Releases only
-/build/
+/build/*
+!/build/README.md
 /dist/
 /release-assets/
 *.exe
@@ -80,3 +81,9 @@ Desktop.ini
 try.py
 *.swp
 *.swo
+
+# App-local overrides and optional shared binary resources
+/backend/app/**/*.local.json
+/backend/app/**/*.local.yaml
+/shared/tools/
+/shared/models/

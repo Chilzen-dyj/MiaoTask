@@ -12,9 +12,9 @@ from urllib.request import urlopen
 
 from PIL import Image
 
-from modules.control_panel import Controller, make_handler
-from modules.campaign import NeedsAttention, load_config
-from modules.daily_state import DailyState
+from backend.core.service.panel import Controller, make_handler
+from backend.app.taobao.activities.double11.activity import NeedsAttention, load_config
+from backend.core.storage.daily_state import DailyState
 
 
 class DailyStateTests(unittest.TestCase):
@@ -133,7 +133,7 @@ class ControllerDailyTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        patcher = patch('modules.control_panel.data_dir', return_value=Path(self.temp.name))
+        patcher = patch('backend.core.service.panel.data_dir', return_value=Path(self.temp.name))
         patcher.start()
         self.addCleanup(patcher.stop)
         self.controller = Controller()
@@ -143,7 +143,7 @@ class ControllerDailyTests(unittest.TestCase):
 
     def test_restart_same_device_loads_totals_and_availability_without_scanning_reset(self):
         c = self.controller
-        with patch('modules.control_panel.local_day', return_value='2026-10-19'):
+        with patch('backend.core.service.panel.local_day', return_value='2026-10-19'):
             c._ensure_daily()
             c.unavailable_tasks['app:示例'] = '未安装示例，已跳过'
             c._runner_event('run', True, stats=dict(completed=2, elapsed=20), phase='done')
@@ -168,12 +168,12 @@ class ControllerDailyTests(unittest.TestCase):
 
     def test_midnight_preserves_runner_cache_reference_and_resets_its_contents(self):
         c = self.controller
-        with patch('modules.control_panel.local_day', return_value='2026-10-19'):
+        with patch('backend.core.service.panel.local_day', return_value='2026-10-19'):
             c._ensure_daily()
             cache = c.unavailable_tasks
             cache['app:示例'] = '未安装示例，已跳过'
             c._runner_event('overnight', True, stats=dict(completed=2, elapsed=20))
-        with patch('modules.control_panel.local_day', return_value='2026-10-20'):
+        with patch('backend.core.service.panel.local_day', return_value='2026-10-20'):
             c._runner_event('overnight', True, stats=dict(completed=3, elapsed=24))
             self.assertIs(cache, c.unavailable_tasks)
             self.assertFalse(cache)
@@ -182,9 +182,9 @@ class ControllerDailyTests(unittest.TestCase):
 
     def test_diagnostics_switching_day_before_runner_event_does_not_import_yesterday_totals(self):
         c = self.controller
-        with patch('modules.control_panel.local_day', return_value='2026-10-19'):
+        with patch('backend.core.service.panel.local_day', return_value='2026-10-19'):
             c._runner_event('overnight', True, stats=dict(completed=8, attempts=9, elapsed=120))
-        with patch('modules.control_panel.local_day', return_value='2026-10-20'):
+        with patch('backend.core.service.panel.local_day', return_value='2026-10-20'):
             # Export/stop/pause may switch the store before the runner emits.
             c.diagnostics()
             self.assertEqual(c.snapshot()['daily']['stats']['completed'], 0)
@@ -199,12 +199,12 @@ class ControllerDailyTests(unittest.TestCase):
         c.on_image(Image.new('RGB', (20, 40)))
         c.log('INFO', '旧手机 resolved-test-phone')
         stages = []
-        def failed_connect(kind, serial, on_status):
+        def failed_connect(kind, serial, on_status, **kwargs):
             on_status('正在等待手机调试授权')
             stages.append(c.snapshot())
             raise ConnectionError('等待授权超时')
-        with patch('modules.device_adapter.DeviceAdapter', side_effect=failed_connect):
-            with self.assertLogs('modules.control_panel', level='ERROR'):
+        with patch('backend.core.device.adapter.DeviceAdapter', side_effect=failed_connect):
+            with self.assertLogs('backend.core.service.panel', level='ERROR'):
                 c._work('connect', {}, load_config())
         self.assertEqual(stages[0]['status'], 'connecting')
         self.assertEqual(stages[0]['message'], '正在等待手机调试授权')
@@ -265,7 +265,7 @@ class ControllerDailyTests(unittest.TestCase):
             raise NeedsAttention('检测到安全验证，需要本人处理')
         runner = Mock()
         runner.run.side_effect = fail_after_callback
-        with patch('modules.control_panel.CampaignRunner', return_value=runner):
+        with patch('backend.core.service.panel.CampaignRunner', return_value=runner):
             c._work('run', {}, load_config())
         result = c.snapshot()
         self.assertEqual(result['status'], 'needs_attention')
@@ -313,8 +313,8 @@ class ControllerDailyTests(unittest.TestCase):
             raise NeedsAttention('请本人验证', kind='security', evidence_saved=True)
         runner = Mock()
         runner.run.side_effect = stop_for_security
-        with patch('modules.control_panel.CampaignRunner', return_value=runner), \
-                patch('modules.control_panel.notify_security_attention') as notify:
+        with patch('backend.core.service.panel.CampaignRunner', return_value=runner), \
+                patch('backend.core.service.panel.notify_security_attention') as notify:
             c._work('run', {}, load_config())
         notify.assert_called_once_with()
         runner.run.assert_called_once()
@@ -326,8 +326,8 @@ class ControllerDailyTests(unittest.TestCase):
         c = self.controller
         runner = Mock()
         runner.run.side_effect = NeedsAttention('未能进入任务菜单')
-        with patch('modules.control_panel.CampaignRunner', return_value=runner), \
-                patch('modules.control_panel.notify_security_attention') as notify:
+        with patch('backend.core.service.panel.CampaignRunner', return_value=runner), \
+                patch('backend.core.service.panel.notify_security_attention') as notify:
             c._work('run', {}, load_config())
         notify.assert_not_called()
         self.assertEqual(c.snapshot()['daily']['failures_count'], 1)

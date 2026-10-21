@@ -6,8 +6,8 @@ from urllib.request import urlopen
 
 from PIL import Image
 
-from modules.branding import ICON_SIZES, windows_icon_path
-from modules.control_panel import make_handler
+from backend.core.service.branding import ICON_SIZES, windows_icon_path
+from backend.core.service.panel import make_handler
 from scripts.check_public_files import audit_file
 
 
@@ -24,12 +24,12 @@ class BrandingTests(unittest.TestCase):
 
     def test_public_audit_only_allows_reviewed_icon_names(self):
         ico = windows_icon_path().read_bytes()
-        self.assertEqual(audit_file('web/assets/miaotask.ico', ico), [])
-        self.assertTrue(audit_file('web/assets/private-device.ico', ico))
-        self.assertTrue(audit_file('web/assets/miaotask.ico', b'not an icon'))
+        self.assertEqual(audit_file('frontend/assets/miaotask.ico', ico), [])
+        self.assertTrue(audit_file('frontend/assets/private-device.ico', ico))
+        self.assertTrue(audit_file('frontend/assets/miaotask.ico', b'not an icon'))
         for size in ICON_SIZES:
             name = f'miaotask-{size}.png'
-            self.assertEqual(audit_file(f'web/assets/{name}', (windows_icon_path().parent / name).read_bytes()), [])
+            self.assertEqual(audit_file(f'frontend/assets/{name}', (windows_icon_path().parent / name).read_bytes()), [])
 
     def test_http_exposes_icons_but_not_master_or_other_local_files(self):
         server = ThreadingHTTPServer(('127.0.0.1', 0), make_handler(None, 'test-only'))

@@ -48,6 +48,11 @@ def smoke(executable, output=None):
                         raise RuntimeError(f'Unexpected packaged response: {name}')
             with urlopen(base + '/api/state', timeout=5) as response:
                 state = json.load(response)
+            with urlopen(base + '/api/apps', timeout=5) as response:
+                catalog = json.load(response)['apps']
+            if state.get('catalog') != catalog:
+                raise RuntimeError('Panel catalog does not match the registry API')
+            result['activity_catalog'] = True
             for asset in ('/assets/miaotask-32.png', '/assets/miaotask-128.png', '/favicon.ico'):
                 with urlopen(base + asset, timeout=5) as response:
                     expected = b'\x00\x00\x01\x00' if asset.endswith('.ico') else b'\x89PNG\r\n\x1a\n'

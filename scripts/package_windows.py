@@ -103,7 +103,7 @@ def main():
                     source_commit=revision, source_repository='https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11',
                     built_utc=datetime.now(timezone.utc).isoformat(),
                     packages={d.metadata['Name']: d.version for d in metadata.distributions()},
-                    adb_bundled=True, hdc_bundled=(package / '_internal/tools/hdc.exe').exists(),
+                    adb_bundled=True, hdc_bundled=(package / '_internal/shared/tools/hdc.exe').exists(),
                     offline_models=True, smoke_test_passed=True)
     (package / 'build-manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
     archive = ROOT / 'dist' / f'{version}-windows-x64.zip'

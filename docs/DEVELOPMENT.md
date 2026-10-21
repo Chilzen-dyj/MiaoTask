@@ -25,23 +25,11 @@ Windows 也可用 `start.bat`。网页无需 npm 或额外构建步骤。命令�
 .\.venv\Scripts\python.exe main.py --port 8766 --no-browser
 ```
 
-`--serial` 指定设备，`--config` 加载公共配置覆盖项，完整参数见 `main.py --help`。默认活动规则在 `configs/double11.json`，不保存个人设备信息。
+`--serial` 指定设备，`--config` 加载公共配置覆盖项，完整参数见 `main.py --help`。默认活动规则在 `backend/app/taobao/activities/double11/config.json` 与 `backend/core/config/defaults.json`，不保存个人设备信息。
 
-## 模块职责
+## 结构与扩展
 
-| 路径 | 职责 |
-| --- | --- |
-| `main.py` | 网页 / CLI 入口与运行时初始化 |
-| `modules/campaign.py` | 任务选择、浏览、搜索、返回、核验和有限重试 |
-| `modules/task_model.py`、`screen_reader.py` | 任务解析及统一 UI / 本地 OCR 观察 |
-| `modules/device_adapter.py`、`adb_transport.py` | 驱动、设备发现、原生输入与连接兼容 |
-| `modules/app_instances.py` | 包名和 Android 用户空间的实例身份 |
-| `modules/daily_state.py` | 当日增量统计、不可用事实与诊断导出 |
-| `modules/control_panel.py` | 本地 HTTP、状态快照及单设备工作线程 |
-| `modules/browse_gestures.py` | 范围内变化的滚动参数 |
-| `modules/windows_tray.py`、`branding.py` | Windows 托盘与统一图标资源 |
-| `web/` | HTML、CSS 和 JavaScript 控制台 |
-| `scripts/`、`tests/` | 构建维护工具与回归用例 |
+代码分为 `backend/core` 框架、`backend/app` 平台与活动、`frontend` 网页。注册、配置、旧数据接续、屏幕和模拟器接口见 [架构与扩展](ARCHITECTURE.md)。本轮只适配原有活动，新增平台需要独立实现和验收，不复制固定坐标。
 
 ## 执行约束
 
@@ -55,7 +43,7 @@ HTTP 仅绑定本机，写操作校验 Host、Origin 与会话令牌。一个工
 
 ## 数据与接口
 
-源码数据默认位于 `runtime/`，便携版位于 `%LOCALAPPDATA%\MiaoTask`；`MIAO_DATA_DIR` 可覆盖位置。主应用使用 `daily/YYYY-MM-DD/<device_hash>/`，其他实例在其下的 `instances/<instance_hash>/` 独立记录。
+源码数据默认位于 `runtime/`，便携版位于 `%LOCALAPPDATA%\MiaoTask`；`MIAO_DATA_DIR` 可覆盖位置。记录使用 `apps/<app>/activities/<activity>/daily/<date>/<device_hash>/instances/<instance_hash>/`。原活动首次接续旧 daily 记录，保留旧文件，其他活动不导入。
 
 | 数据 | 含义 |
 | --- | --- |

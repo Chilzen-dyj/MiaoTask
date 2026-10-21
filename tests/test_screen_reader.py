@@ -3,8 +3,8 @@ from unittest.mock import Mock, patch
 
 from PIL import Image
 
-from modules.screen_reader import ScreenReader
-from modules.task_model import TextNode
+from backend.core.device.screen import ScreenReader
+from backend.app.taobao.activities.double11.tasks import TextNode
 
 
 def readable_tree():
@@ -70,12 +70,12 @@ class ScreenReaderObservationTests(unittest.TestCase):
         phone = device()
         on_image = Mock()
         reader = ScreenReader(phone, on_image=on_image)
-        with patch('modules.screen_reader.time.monotonic', return_value=10):
+        with patch('backend.core.device.screen.time.monotonic', return_value=10):
             reader.read()
-        with patch('modules.screen_reader.time.monotonic', return_value=10.8):
+        with patch('backend.core.device.screen.time.monotonic', return_value=10.8):
             reader.read()
         self.assertEqual(phone.screenshot.call_count, 1)
-        with patch('modules.screen_reader.time.monotonic', return_value=11.01):
+        with patch('backend.core.device.screen.time.monotonic', return_value=11.01):
             reader.read()
         self.assertEqual(phone.screenshot.call_count, 2)
         self.assertEqual(reader.last_image.size, (500, 1000))

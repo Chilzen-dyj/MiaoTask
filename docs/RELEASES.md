@@ -2,6 +2,13 @@
 
 按新到旧维护用户可见变化。GitHub Release 正文从对应的 `## 版本号` 小节提取，发布状态以 [Releases](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11/releases) 为准。
 
+## MiaoTask-v0.1.0
+
+MiaoTask 架构重构，本地开发中，尚未发布。
+
+* 【优化】框架、应用与前端分层，保留现有双11行为和旧接口。
+* 【优化】活动注册与分层配置，记录按应用、活动、设备、实例和日期隔离。
+
 ## MiaoTask-v0.0.9
 
 分身管理、滚动设置与系统托盘。

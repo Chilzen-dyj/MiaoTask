@@ -7,12 +7,12 @@ from unittest.mock import Mock, patch
 
 from PIL import Image
 
-from modules.app_instances import AppInstance, InstanceMismatch, discover_android_instances, parse_foreground
-from modules.campaign import CampaignRunner, NeedsAttention, Stopped, load_config
-from modules.control_panel import Controller
-from modules.daily_state import DailyState
-from modules.device_adapter import DeviceAdapter
-from modules.screen_reader import Screen
+from backend.core.device.instances import AppInstance, InstanceMismatch, discover_android_instances, parse_foreground
+from backend.app.taobao.activities.double11.activity import CampaignRunner, NeedsAttention, Stopped, load_config
+from backend.core.service.panel import Controller
+from backend.core.storage.daily_state import DailyState
+from backend.core.device.adapter import DeviceAdapter
+from backend.core.device.screen import Screen
 
 
 PRIMARY = AppInstance('com.taobao.taobao', 0, '主应用')
@@ -96,7 +96,7 @@ class ScopedDeviceTests(unittest.TestCase):
         d = self.phone()
         d._device.shell.side_effect = [result('com.taobao.taobao/.Welcome'), result('Starting')]
         d.current_app = Mock(side_effect=[OSError('transition'), dict(package=CLONE.package, user_id=999)])
-        with patch('modules.device_adapter.time.sleep'):
+        with patch('backend.core.device.adapter.time.sleep'):
             d.resume_app(CLONE.package)
         self.assertEqual(d.current_app.call_count, 2)
         d._device.app_start.assert_not_called()
@@ -113,7 +113,7 @@ class ScopedDeviceTests(unittest.TestCase):
         d._device.shell.side_effect = shell
         d.current_app = Mock(side_effect=lambda: dict(package=CLONE.package, user_id=999) if len(starts) == 2 else dict(package='com.example.previous', user_id=0))
         clock = [0.0]
-        with patch('modules.device_adapter.time.monotonic', side_effect=lambda: clock[0]), patch('modules.device_adapter.time.sleep', side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
+        with patch('backend.core.device.adapter.time.monotonic', side_effect=lambda: clock[0]), patch('backend.core.device.adapter.time.sleep', side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
             d.restart_app(CLONE.package)
         self.assertEqual(len(starts), 2)
         self.assertTrue(all(args[2:4] == ['--user', '999'] for args in starts))
@@ -127,7 +127,7 @@ class ScopedDeviceTests(unittest.TestCase):
             d._device.shell.return_value = result('com.taobao.taobao/.Welcome')
             d.current_app = Mock(return_value=dict(package=CLONE.package, user_id=user))
             clock = [0.0]
-            with patch('modules.device_adapter.time.monotonic', side_effect=lambda: clock[0]), patch('modules.device_adapter.time.sleep', side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
+            with patch('backend.core.device.adapter.time.monotonic', side_effect=lambda: clock[0]), patch('backend.core.device.adapter.time.sleep', side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
                 with self.assertRaises(InstanceMismatch):
                     d.resume_app(CLONE.package)
             starts = [c.args[0] for c in d._device.shell.call_args_list if c.args[0][:2] == ['am', 'start']]
@@ -238,7 +238,7 @@ class InstanceDailyAndQueueTests(unittest.TestCase):
                 emit(stats=dict(completed=1, attempts=1))
             runner.run.side_effect = run
             return runner
-        with patch('modules.control_panel.data_dir', return_value=self.root), patch('modules.control_panel.CampaignRunner', side_effect=create):
+        with patch('backend.core.service.panel.data_dir', return_value=self.root), patch('backend.core.service.panel.CampaignRunner', side_effect=create):
             c._work('run', dict(instance_ids=[CLONE.id, PRIMARY.id]), load_config())
         self.assertEqual(trace, [('created', CLONE.id), ('run', CLONE.id), ('created', PRIMARY.id), ('run', PRIMARY.id)])
         state = c.snapshot()
@@ -253,9 +253,9 @@ class InstanceDailyAndQueueTests(unittest.TestCase):
                 c = self.controller()
                 runner = Mock()
                 runner.run.side_effect = error
-                with patch('modules.control_panel.data_dir', return_value=self.root), \
-                        patch('modules.control_panel.CampaignRunner', return_value=runner) as factory, \
-                        patch('modules.control_panel.notify_security_attention'):
+                with patch('backend.core.service.panel.data_dir', return_value=self.root), \
+                        patch('backend.core.service.panel.CampaignRunner', return_value=runner) as factory, \
+                        patch('backend.core.service.panel.notify_security_attention'):
                     c._work('run', dict(instance_ids=[PRIMARY.id, CLONE.id]), load_config())
                 self.assertEqual(factory.call_count, 1)
                 self.assertEqual(c.snapshot()['instance_queue'][1]['status'], 'pending')

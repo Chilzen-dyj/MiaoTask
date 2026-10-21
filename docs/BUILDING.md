@@ -20,8 +20,10 @@
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -q
-.\.venv\Scripts\python.exe -m compileall -q main.py modules scripts tests
-node --check web/app.js
+.\.venv\Scripts\python.exe -m compileall -q main.py backend scripts tests
+node --check frontend/js/app.js
+node --check frontend/js/api.js
+node --check frontend/js/components/activity-selector.js
 ```
 
 Python 用例使用模拟设备，覆盖解析、任务更新、搜索提交、返回核验、重试、累计领奖、实例隔离、日记录、连接与公开文件边界。涉及界面脚本时再执行 Node 语法检查，并在浏览器检查相应交互。
@@ -73,6 +75,12 @@ Expand-Archive -LiteralPath "dist/$releaseVersion-windows-x64.zip" -DestinationP
 ```
 
 自检会从 PATH 中移除 Python / ADB，检查内置 ADB、离线 OCR、图标、HTTP、浏览器来源头、重复启动和退出，不操作手机。另检查随包文档和构建清单与发布提交一致；升级、托盘和涉及手机的变更按影响范围补充检查。SHA256 为可选完整性附件。
+
+## 重构验证
+
+0.1.0 的原有回归用例保留业务断言，仅调整迁移后的导入和资源路径。`tests/fixtures/v009_contract.json` 来自基线提交的合成页面，比较完整配置及任务解析结果；不含真实设备或账号数据。架构测试覆盖新活动注册、生命周期、活动切换限制、命名空间、旧记录接续和坐标回映接口。
+
+本轮没有连接手机或模拟器；本地通过不能代替真机的入口、搜索、跳转、暂停恢复与分身验证。实机验收前不发布正式 Release。
 
 ## 版本规则
 
