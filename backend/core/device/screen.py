@@ -9,13 +9,19 @@ import re
 import time
 
 from backend.core.models import TextNode, bounds_of, normalize
-from backend.core.device.geometry import IdentityImageProcessor
+from backend.core.device.geometry import IdentityImageProcessor, DisplayGeometry, ocr_tiles
+from backend.core.context import workspace_scope
+import threading
 
 logger = logging.getLogger(__name__)
 
 
-@lru_cache(maxsize=1)
 def local_ocr_engine():
+    return _scoped_ocr_engine(workspace_scope.get() or ('thread', threading.get_ident()))
+
+
+@lru_cache(maxsize=8)
+def _scoped_ocr_engine(scope):
     try:
         from rapidocr import RapidOCR
     except ImportError as exc:
@@ -44,6 +50,8 @@ class Screen:
     source: str = "ui"
     tree: object = None
     user_id: int | None = None
+    geometry: DisplayGeometry | None = None
+    obscured: bool = False
 
     @property
     def text(self):
@@ -73,27 +81,37 @@ class ScreenReader:
         self.last_observation_seconds = 0.0
         self.image_processor = image_processor or IdentityImageProcessor()
 
-    def _flatten(self, tree):
+    def _flatten(self, tree, foreground_package=None):
         nodes = []
-        def walk(item):
+        def walk(item, inherited_package=''):
             if isinstance(item, list):
                 for child in item:
-                    walk(child)
+                    walk(child, inherited_package)
             elif isinstance(item, dict):
                 attrs = item.get("attributes", item)
-                package = attrs.get("package", "")
-                if not package.startswith(("com.android.systemui", "com.miui.notes", "com.google.android.inputmethod")):
+                package = attrs.get("package", inherited_package)
+                if (not foreground_package or not package or package == foreground_package) and not package.startswith(("com.android.systemui", "com.miui.notes", "com.google.android.inputmethod")):
                     text = attrs.get("text") or attrs.get("description") or attrs.get("content-desc") or ""
                     bounds = bounds_of(attrs.get("bounds", attrs.get("rect")))
                     if text and bounds[2] > bounds[0] and bounds[3] > bounds[1]:
                         nodes.append(TextNode(text, bounds))
                 for key in ("children", "hierarchy"):
                     if isinstance(item.get(key), (list, dict)):
-                        walk(item[key])
+                        walk(item[key], package)
         walk(tree)
         return nodes
 
     def _ocr(self, image):
+        nodes=[]
+        for tile, x, y in ocr_tiles(image):
+            for node in self._ocr_tile(tile):
+                a,b,c,d=node.bounds
+                mapped=TextNode(node.text,(a+x,b+y,c+x,d+y),node.source)
+                if not any(n.text==mapped.text and abs(n.center[0]-mapped.center[0])<12 and abs(n.center[1]-mapped.center[1])<12 for n in nodes):
+                    nodes.append(mapped)
+        return nodes
+
+    def _ocr_tile(self, image):
         if self._engine is None:
             self._engine = local_ocr_engine()
         import numpy as np
@@ -156,7 +174,8 @@ class ScreenReader:
         tree = None if direct_visual else self.device.dump_hierarchy()
         foreground = self.device.current_app()
         package = foreground.get("package", "")
-        nodes = [] if direct_visual else self._flatten(tree)
+        nodes = [] if direct_visual else self._flatten(tree, package)
+        self._size = self.device.display_size
         meaningful = [n for n in nodes if n.bounds[3] - n.bounds[1] < (self._size or (1440, 3200))[1] * .4]
         source = "ui"
         if self.ocr_enabled and (force_ocr or len(meaningful) < 5):
@@ -164,14 +183,23 @@ class ScreenReader:
                 logger.info("页面控件不可读，启用本地 OCR 识别（截图不上传）")
                 self._ocr_notice = True
             image = self._capture()
-            nodes = self._image_nodes(image)
+            nodes = [] if max(hi for lo,hi in image.getextrema()) < 8 else self._image_nodes(image)
             source = "ocr"
+            if not nodes:
+                tree = self.device.dump_hierarchy()
+                nodes = self._flatten(tree,package)
+                source = 'ui-fallback'
         elif (self.on_image and not getattr(self.device, 'preview_managed', False)
               and time.monotonic() - self._last_preview >= 1):
             self._capture()
         if self._size is None:
             self._size = self.device.display_size
         screen = Screen(nodes, *self._size, package, source, tree, foreground.get('user_id'))
+        if source == 'ui-fallback' and self.last_image is not None:
+            screen.obscured = max(hi for lo,hi in self.last_image.getextrema()) < 8
+        geometry = getattr(self.device,'display_geometry', None)
+        if isinstance(geometry,DisplayGeometry) and (geometry.width,geometry.height)==self._size:
+            screen.geometry=geometry
         self.last_screen = screen
         self.last_observation_seconds = time.monotonic() - started
         return screen

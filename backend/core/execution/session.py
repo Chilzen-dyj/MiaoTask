@@ -79,12 +79,21 @@ class Session:
 
     def click(self, node):
         self.control.check()
+        geometry = getattr(self.reader.last_screen, 'geometry', None)
+        if geometry and not geometry.contains(*node.center):
+            from backend.core.errors import NeedsAttention
+            raise NeedsAttention('目标位于系统栏、屏幕裁切或不可操作区域，请检查窗口布局')
         self.device.click(*node.center)
 
 
     def browse_swipe(self, screen):
         self.control.check()
-        x1, y1, x2, y2, duration = self.gestures.sample(screen.width, screen.height)
+        if screen.geometry:
+            left,top,right,bottom=screen.geometry.content_bounds
+            x1,y1,x2,y2,duration=self.gestures.sample(right-left,bottom-top)
+            x1,x2=x1+left,x2+left;y1,y2=y1+top,y2+top
+        else:
+            x1, y1, x2, y2, duration = self.gestures.sample(screen.width, screen.height)
         self.device.swipe(x1, y1, x2, y2, duration=duration)
 
 

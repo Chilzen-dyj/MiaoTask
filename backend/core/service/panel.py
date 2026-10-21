@@ -16,7 +16,7 @@ import sys
 import threading
 import time
 import uuid
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
 import webbrowser
 
 from backend.core.registry import create_runner as CampaignRunner, default_registry
@@ -33,6 +33,7 @@ from backend.core.device.instances import AppInstance, InstanceMismatch
 from backend.core.service.notify import notify_security_attention
 from backend.core.runtime import data_dir, version
 from backend.core.service.branding import PUBLIC_ICON_FILES
+from backend.core.context import device_scoped
 
 logger = logging.getLogger(__name__)
 from backend.core.runtime import ROOT
@@ -252,6 +253,8 @@ class Controller(PreviewWorker):
     def dispatch(self, action, payload):
         control_action = action in ('pause', 'resume', 'stop')
         with self.lock:
+            if getattr(self, 'closed', False):
+                raise ValueError('设备工作区已关闭')
             if control_action:
                 if not (self.thread and self.thread.is_alive()):
                     raise ValueError('当前没有正在执行的操作')
@@ -284,7 +287,7 @@ class Controller(PreviewWorker):
                 if (payload.get('app', self.registration.app.id) != self.registration.app.id
                         or payload.get('activity', self.registration.activity.id) != self.registration.activity.id):
                     raise ValueError('请先选择对应应用和活动')
-                if action not in ('connect', 'wifi_pair', 'wifi_connect', 'scan', 'run', 'capture', 'configure', 'select_instance', 'refresh_instances'):
+                if action not in ('connect', 'wifi_pair', 'wifi_connect', 'scan', 'run', 'open_app', 'capture', 'configure', 'select_instance', 'refresh_instances'):
                     raise ValueError('未知操作')
                 if action in ('wifi_pair', 'wifi_connect'):
                     from backend.core.device.wifi import endpoint, pairing_code
@@ -324,6 +327,7 @@ class Controller(PreviewWorker):
                     self.control = RunControl()
                     self.update(config=config, status={'connect': 'connecting', 'wifi_pair': 'connecting', 'wifi_connect': 'connecting', 'scan': 'scanning',
                                                       'run': 'running', 'capture': 'scanning',
+                                                      'open_app':'scanning',
                                                       'select_instance': 'scanning', 'refresh_instances': 'scanning'}[action],
                                 message='正在连接手机' if action in ('connect', 'wifi_pair', 'wifi_connect') else '正在读取手机页面')
                     self.thread = threading.Thread(target=self._work, args=(action, payload, config), daemon=True,
@@ -336,6 +340,7 @@ class Controller(PreviewWorker):
         elif action == 'configure':
             self.log('INFO', '执行设置已应用')
 
+    @device_scoped
     def _work(self, action, payload, config):
         self._last_failure_stamp = 0.0
         try:
@@ -353,6 +358,8 @@ class Controller(PreviewWorker):
                     return
             if action in ('connect', 'wifi_pair', 'wifi_connect'):
                 from backend.core.device.adapter import DeviceAdapter
+                if getattr(self, 'release_device', None):
+                    self.release_device()
                 # A failed attempt to choose another phone must not leave the
                 # previous phone looking connected or export its diagnostics.
                 self.device = None
@@ -376,15 +383,19 @@ class Controller(PreviewWorker):
                     from backend.core.device.wifi import connect_wifi
                     self.control.check()
                     serial = connect_wifi(serial, self._connection_status)
-                device = DeviceAdapter(kind, serial, on_status=self._connection_status,
-                                       application=self.registration.app.profile)
+                options = dict(on_status=self._connection_status, application=self.registration.app.profile)
+                if getattr(self, 'claim_device', None):
+                    options['on_resolved'] = self.claim_device
+                device = DeviceAdapter(kind, serial, **options)
                 info = device.current_app()
                 self.control.check()
                 self.on_image(device.screenshot())
+                width, height = device.display_size
                 self.device = device
                 device.preview_managed = True
                 self._ensure_daily()
                 self.update(connected=True, device=dict(type=kind, serial=device.serial or '自动选择'),
+                            display=dict(width=width, height=height),
                             package=info.get('package', ''), status='ready', phase='ready',
                             app_instances=[i.to_dict() for i in device.app_instances],
                             selected_instance=device.selected_instance.id if device.selected_instance else '',
@@ -392,6 +403,15 @@ class Controller(PreviewWorker):
                             tasks=[], message='设备已连接，请确认应用实例后开始自动执行')
                 self._start_preview()
                 self.log('INFO', f'设备连接成功：{device}')
+            elif action == 'open_app':
+                self.control.check()
+                with self.device.instance_session():
+                    self.device.resume_app(self.registration.app.profile.package_for(self.device.device_type))
+                    self.control.wait(.5)
+                    info = self.device.current_app()
+                    self.on_image(self.device.screenshot())
+                self.update(status='ready', phase='ready', package=info.get('package',''),
+                            message='已唤醒所选应用；未进行登录、授权或任务操作')
             elif action == 'capture':
                 self.control.check()
                 self.on_image(self.device.screenshot())
@@ -464,6 +484,8 @@ class Controller(PreviewWorker):
             self.on_failure(dict(reason=f'{type(exc).__name__}: {exc}', phase='error', kind='exception'))
         finally:
             payload.pop('pair_code', None)
+            if action in ('connect','wifi_pair','wifi_connect') and self.device is None and getattr(self, 'release_device', None):
+                self.release_device()
             if action in ('run', 'scan') and self.device is not None and not self.control.stopped.is_set():
                 try:
                     self.on_image(self.device.screenshot())
@@ -483,6 +505,7 @@ class Controller(PreviewWorker):
         self.update(selected_instance=target.id, tasks=[], current_task='', remaining=0,
                     last_failure=None, stats=asdict(RunStats()))
 
+    @device_scoped
     def _change_activity(self, registration, config):
         try:
             self.control.check()
@@ -534,6 +557,7 @@ class Controller(PreviewWorker):
 
 
 def make_handler(controller, token):
+    root = controller
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
             pass
@@ -561,14 +585,30 @@ def make_handler(controller, token):
                 self.reply(403, {'error': '只允许本机访问'})
                 return
             path = urlsplit(self.path).path
+            if path == '/api/workspaces' and hasattr(root, 'summaries'):
+                self.reply(200, dict(devices=root.summaries()))
+                return
+            try:
+                controller = root.resolve(parse_qs(urlsplit(self.path).query).get('device', [None])[0]) if hasattr(root, 'resolve') else root
+            except ValueError as exc:
+                self.reply(404, {'error':str(exc)})
+                return
             if path in ('/api/state', '/api/session/status'):
                 controller._last_client_seen = time.monotonic()
                 self.reply(200, dict(controller.snapshot(), token=token, version=version(),
-                                     busy=bool(controller.thread and controller.thread.is_alive())))
+                                     busy=bool(controller.thread and controller.thread.is_alive()),
+                                     workspace_id=getattr(controller, 'workspace_id', 'default'),
+                                     workspaces=root.summaries() if hasattr(root, 'summaries') else []))
             elif path == '/api/health':
                 self.reply(200, dict(app='miao-task', version=version()))
             elif path == '/api/devices':
                 self.reply(200, discover_devices())
+            elif path == '/api/emulators':
+                from backend.core.device.emulators import discover_emulators
+                self.reply(200, discover_emulators())
+            elif path == '/api/inventory':
+                from backend.core.device.inventory import inventory
+                self.reply(200, inventory())
             elif path == '/api/wifi/devices':
                 from backend.core.device.wifi import discover_wifi
                 try:
@@ -615,14 +655,31 @@ def make_handler(controller, token):
                 if not isinstance(payload, dict):
                     raise ValueError('请求必须为 JSON 对象')
                 path = urlsplit(self.path).path
+                key = None if path.startswith('/api/workspaces') or path == '/api/shutdown' else parse_qs(urlsplit(self.path).query).get('device', [None])[0]
+                controller = root.resolve(key) if hasattr(root, 'resolve') else root
                 if not path.startswith('/api/'):
                     self.reply(404, {'error': '路径不存在'})
                     return
                 if path == '/api/shutdown':
-                    controller.control.stopped.set()
-                    controller._preview_stop.set()
+                    if hasattr(root, 'stop_all'):
+                        root.stop_all()
+                    else:
+                        controller.control.stopped.set()
+                        controller._preview_stop.set()
                     self.reply(202, {'ok': True})
                     threading.Thread(target=self.server.shutdown, daemon=True).start()
+                    return
+                if hasattr(root, 'summaries') and path.startswith('/api/workspaces'):
+                    if path == '/api/workspaces':
+                        key = root.add(payload.get('label', ''))
+                        self.reply(201, dict(id=key, devices=root.summaries()))
+                    elif path == '/api/workspaces/remove':
+                        root.remove(payload.get('id'))
+                        self.reply(200, dict(ok=True, devices=root.summaries()))
+                    elif path == '/api/workspaces/batch':
+                        self.reply(202, dict(results=root.batch(payload)))
+                    else:
+                        self.reply(404, {'error':'路径不存在'})
                     return
                 if path == '/api/export':
                     self.reply(200, controller.diagnostics(), 'application/zip')
@@ -641,7 +698,8 @@ def make_handler(controller, token):
 
 
 def serve(port=8765, open_browser=True, config=None, port_file=None, app=None, activity=None):
-    controller = Controller(config, app=app, activity=activity)
+    from backend.core.service.devices import DeviceHub
+    controller = DeviceHub(config, app=app, activity=activity)
     logging.getLogger().addHandler(PanelLogHandler(controller))
     handler = make_handler(controller, secrets.token_urlsafe(32))
     def existing_assistant():
@@ -676,27 +734,21 @@ def serve(port=8765, open_browser=True, config=None, port_file=None, app=None, a
         print(f'双11任务助手已启动：{url}\n按 Ctrl+C 退出。')
     from backend.core.service.tray import WindowsTray
     def exit_service():
-        controller.control.stopped.set()
-        controller._preview_stop.set()
-        controller.update(status='stopping', message='正在停止任务并退出助手')
+        controller.stop_all()
         server.shutdown()
     tray = WindowsTray(lambda: webbrowser.open(url), exit_service)
     try:
         tray_active = tray.start()
-        controller.update(tray_enabled=tray_active)
+        controller.resolve().update(tray_enabled=tray_active)
         if open_browser:
             webbrowser.open(url)
         server.serve_forever(poll_interval=.3)
     except KeyboardInterrupt:
-        controller.control.stopped.set()
+        controller.stop_all()
     finally:
-        controller.control.stopped.set()
-        controller._preview_stop.set()
-        if controller.thread and controller.thread is not threading.current_thread():
-            controller.thread.join(25)
         tray.stop()
         try:
-            controller._persist_state()
+            controller.close()
         except Exception:
             logger.exception('关闭控制台时保存当天记录失败')
         server.server_close()

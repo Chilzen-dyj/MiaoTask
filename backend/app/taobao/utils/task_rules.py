@@ -41,6 +41,8 @@ def classify(title, detail, texts, action, current, total):
                    and not re.search(r'需下单|完成下单|支付|购买|消费|订单', detail))
     passive_app_visit = bool(target_app and re.search(r'跳转得(?:奖励)?|点击去逛', detail))
     safety_text = combined.replace('领闪购红包下单直接省', '领闪购红包', 1) if flash_visit else combined
+    if title == '你关注的商品都可抵' and seconds and not re.search('关注|订阅|收藏', detail):
+        safety_text = safety_text.replace(title, '商品浏览', 1)
     if action in DONE_ACTIONS or current >= total:
         kind, reason = "done", "今日已完成"
     elif EXCLUDED_RE.search(combined) or (DRAW_RE.search(combined) and not passive_app_visit):

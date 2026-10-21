@@ -5,6 +5,7 @@
 使用统一的API操作鸿蒙(HarmonyOS)和安卓(Android)设备。
 """
 import logging
+import io
 import re
 from contextlib import contextmanager, nullcontext
 from functools import wraps
@@ -41,7 +42,7 @@ def serialized(method):
 class DeviceAdapter:
     """设备适配器，统一HarmonyOS和Android的UI自动化接口"""
 
-    def __init__(self, device_type, serial=None, on_status=None, application=None):
+    def __init__(self, device_type, serial=None, on_status=None, application=None, on_resolved=None):
         """
         初始化设备适配器
 
@@ -50,6 +51,7 @@ class DeviceAdapter:
             serial: 设备序列号或无线连接地址（如 '192.168.1.100:5555'）
         """
         self._application = application
+        self.on_resolved = on_resolved
         self.device_type = device_type
         self.serial = serial
         self.io_lock = threading.RLock()
@@ -99,6 +101,7 @@ class DeviceAdapter:
             import uiautomator2 as u2
             from backend.core.device.discovery import prepare_android_connection
             self.serial = prepare_android_connection(self.serial, on_status=self.on_status)
+            claimed_identity = self.on_resolved(self.device_type, self.serial) if self.on_resolved else None
             # 设置HTTP超时（模块级常量）
             u2.HTTP_TIMEOUT = 20
             if self.serial:
@@ -112,7 +115,7 @@ class DeviceAdapter:
             self._device.settings['operation_delay'] = (0.1, 0.1)
             self._device.settings['operation_delay_methods'] = [
                 method for method in self._device.settings['operation_delay_methods'] if method != 'swipe']
-            self.identity_serial = self._android_identity() or self.serial
+            self.identity_serial = claimed_identity or self._android_identity() or self.serial
         else:
             raise ValueError(f"不支持的设备类型: {self.device_type}")
 
@@ -171,7 +174,10 @@ class DeviceAdapter:
     @serialized
     def click(self, x, y):
         """点击坐标"""
-        self._device.click(x, y)
+        if getattr(self, '_display_id', 0):
+            self._checked_shell(['input', '-d', str(self._display_id), 'tap', str(round(x)), str(round(y))])
+        else:
+            self._device.click(x, y)
 
     @serialized
     def swipe(self, x1, y1, x2, y2, duration=0.5):
@@ -179,8 +185,11 @@ class DeviceAdapter:
         if self.device_type == 'hmdriver2':
             self._device.swipe(x1=x1, y1=y1, x2=x2, y2=y2)
         else:
-            # uiautomator2: swipe(fx, fy, tx, ty, duration)
-            self._device.swipe(x1, y1, x2, y2, duration=duration)
+            if getattr(self, '_display_id', 0):
+                self._checked_shell(['input','-d',str(self._display_id),'swipe',
+                    *[str(round(n)) for n in (x1,y1,x2,y2)], str(max(1,round(duration*1000)))])
+            else:
+                self._device.swipe(x1, y1, x2, y2, duration=duration)
 
     @serialized
     def swipe_ext(self, direction, box=None):
@@ -196,7 +205,7 @@ class DeviceAdapter:
         if self.device_type == 'hmdriver2':
             self._device.go_back()
         else:
-            self._device.press("back")
+            self.press('back')
 
     @serialized
     def go_home(self):
@@ -204,7 +213,7 @@ class DeviceAdapter:
         if self.device_type == 'hmdriver2':
             self._device.go_home()
         else:
-            self._device.press("home")
+            self.press('home')
 
     @serialized
     def input_text(self, text):
@@ -271,7 +280,23 @@ class DeviceAdapter:
             # adbutils drops the user field. Read it from the SAME focused
             # window record instead; a background instance is never evidence.
             result = self._device.shell(['dumpsys', 'window', 'windows'])
+            if result.exit_code == 0:
+                self._window_dump = result.output
+                from backend.core.device.displays import focused_display
+                display_id = focused_display(result.output)
+                if display_id != getattr(self, '_display_id', 0):
+                    self._screenshot_cache = None
+                    self._capture_id = None
+                    self._active_image_size = None
+                self._display_id = display_id
             info = parse_foreground(result.output) if result.exit_code == 0 else None
+            if info is None and result.exit_code == 0:
+                from backend.core.device.displays import focused_window_dump
+                displays=self._device.shell(['dumpsys','window','displays'])
+                if displays.exit_code == 0:
+                    self._focused_window_dump=focused_window_dump(displays.output,getattr(self,'_display_id',0))
+                    self._focused_window_stamp=time.monotonic()
+                    info=parse_foreground(self._focused_window_dump)
             if info is None:
                 result = self._device.shell(['dumpsys', 'activity', 'activities'])
                 info = parse_foreground(result.output) if result.exit_code == 0 else None
@@ -422,8 +447,22 @@ class DeviceAdapter:
         self._screenshot_cache = None
         if self.device_type == 'uiautomator2':
             try:
-                image = self._device.screenshot()
+                if getattr(self, '_display_id', 0):
+                    from PIL import Image
+                    import adbutils
+                    from backend.core.device.displays import capture_display
+                    if not getattr(self, '_capture_id', None) or time.monotonic()-getattr(self,'_capture_stamp',0) > 2:
+                        output = self._device.shell(['dumpsys','display'])
+                        self._capture_id = capture_display(output.output, self._display_id)
+                        self._capture_stamp = time.monotonic()
+                    raw = adbutils.adb.device(self.serial).shell(['screencap','-p','-d',self._capture_id], encoding=None)
+                    image = Image.open(io.BytesIO(raw)).convert('RGB')
+                else:
+                    image = self._device.screenshot()
             except OSError:
+                if getattr(self, '_display_id', 0):
+                    self._capture_id = None
+                    raise
                 # Cold launch can momentarily close the automation RPC socket.
                 # Explicit primary display uses u2's public direct-ADB capture,
                 # returning a fresh frame without another app/server restart.
@@ -437,6 +476,7 @@ class DeviceAdapter:
                 with Image.open(path) as source:
                     image = source.convert('RGB').copy()
         if hasattr(image, 'copy'):
+            self._active_image_size = image.size
             self._screenshot_cache = (started, image.copy())
         return image
 
@@ -491,8 +531,24 @@ class DeviceAdapter:
         if self.device_type == 'hmdriver2':
             return self._device.display_size
         else:
+            if getattr(self, '_display_id', 0):
+                from backend.core.device.displays import focused_window_dump
+                if time.monotonic()-getattr(self,'_focused_window_stamp',0) > .2:
+                    result=self._device.shell(['dumpsys','window','displays'])
+                    if result.exit_code == 0:
+                        self._focused_window_dump=focused_window_dump(result.output,self._display_id)
+                        self._focused_window_stamp=time.monotonic()
+                size=re.search(r'cur=(\d+)x(\d+)',getattr(self,'_focused_window_dump',''))
+                if size:
+                    return int(size[1]),int(size[2])
+                return getattr(self, '_active_image_size', None) or self.screenshot().size
             w, h = self._device.window_size()
             return (w, h)
+
+    @property
+    def display_geometry(self):
+        from backend.core.device.geometry import geometry_from_window
+        return geometry_from_window(*self.display_size, getattr(self,'_focused_window_dump','') or getattr(self,'_window_dump',''))
 
     @property
     def gesture(self):
@@ -513,7 +569,13 @@ class DeviceAdapter:
             else:
                 self._device.press_key(key)
         else:
-            self._device.press(key)
+            if getattr(self, '_display_id', 0):
+                mapping = {'back':'4','home':'3','enter':'66','search':'84'}
+                if key not in mapping:
+                    raise ValueError('当前多屏设备不支持该按键')
+                self._checked_shell(['input','-d',str(self._display_id),'keyevent',mapping[key]])
+            else:
+                self._device.press(key)
 
     def mute(self):
         """静音：多次按音量减"""

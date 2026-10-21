@@ -5,6 +5,7 @@ import threading
 import logging
 from datetime import datetime
 logger=logging.getLogger(__name__)
+from backend.core.context import device_scoped
 
 class PreviewWorker:
     def on_image(self, image):
@@ -15,9 +16,11 @@ class PreviewWorker:
         with self.lock:
             self.image = output.getvalue()
             self.state['image_sequence'] += 1
+            self.state['display'] = dict(width=image.width,height=image.height)
             self.state['image_updated_at'] = datetime.now().astimezone().isoformat(timespec='milliseconds')
         self._preview_last = time.monotonic()
 
+    @device_scoped
     def _preview_loop(self):
         while not self._preview_stop.wait(.05):
             if time.monotonic() - self._last_client_seen > 5:

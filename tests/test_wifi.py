@@ -95,7 +95,7 @@ class WifiPanelTests(unittest.TestCase):
     def test_wireless_connection_reuses_original_adapter_and_instance_discovery(self):
         from PIL import Image
         controller = Controller()
-        device = Mock(serial='192.0.2.10:45678', app_instances=[], selected_instance=None, instance_warnings=[])
+        device = Mock(serial='192.0.2.10:45678', app_instances=[], selected_instance=None, instance_warnings=[], display_size=(20,40))
         device.current_app.return_value = {'package':'synthetic.app'}
         device.screenshot.return_value = Image.new('RGB', (20, 40))
         with patch.object(wifi, 'connect_wifi', return_value=device.serial) as connect, patch(

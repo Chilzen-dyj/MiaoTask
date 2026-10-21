@@ -7,7 +7,7 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
 ROOT_FILES = {
-    '.gitignore', '.gitattributes', 'README.md', 'main.py', 'build.spec', 'start.bat',
+    '.gitignore', '.gitattributes', 'README.md', 'AGENTS.md', 'main.py', 'build.spec', 'start.bat',
     'build/README.md', 'requirements.txt', 'requirements-build.txt', 'requirements-windows.lock', 'version.json',
 }
 SOURCE_DIRS = {'.github', 'configs', 'docs', 'modules', 'scripts', 'tests', 'web', 'frontend', 'backend', 'shared'}

@@ -151,6 +151,7 @@ class Navigator:
                     action = target
                     clicked.add(key)
                 if action:
+                    logger.info('活动入口点击：文案 %s，坐标来自当前页面', action.text)
                     self.click(action)
                     awaiting_activity = True
                     last_action = self.control.now()

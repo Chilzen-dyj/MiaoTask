@@ -17,7 +17,9 @@ def self_test(output):
             checks[name] = importlib.metadata.version(name)
         except Exception as exc:
             errors.append(f'{name}: {exc}')
-    for name in ('frontend/index.html', 'frontend/js/app.js', 'frontend/css/base.css', 'backend/core/config/defaults.json'):
+    for name in ('frontend/index.html', 'frontend/js/app.js', 'frontend/js/api.js',
+                 'frontend/js/components/device-manager.js','frontend/js/components/wifi-connect.js',
+                 'frontend/css/base.css', 'backend/core/config/defaults.json'):
         checks[name] = (assets_dir() / name).is_file()
         if not checks[name]:
             errors.append(f'Missing asset: {name}')

@@ -7,6 +7,13 @@ logger = logging.getLogger('backend.execution')
 from .tasks import normalize
 
 class EntryPolicy:
+    @staticmethod
+    def passive_login_banner(screen):
+        # Public homepage may advertise login in a bottom banner. A real login
+        # page/modal still stops; no buttons on that authentication surface click.
+        return bool(screen.find('领淘金币') and sum(bool(screen.find(label)) for label in
+                    ('淘宝秒杀','飞猪旅行','淘宝闪购','阿里拍卖','淘票票')) >= 2)
+
     def task_panel_entry(self, screen):
         # Controls can say 去赚能量 / 立即赚能量 / 赚能量，按钮. Match short
         # captions containing the configured label, while excluding sheet titles

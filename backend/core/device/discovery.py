@@ -82,6 +82,19 @@ def list_android_devices(adb_path=None, *, timeout=8, env=None):
     return _parse_devices(result.stdout)
 
 
+def android_identity(serial):
+    """Read-only stable identity, including emulators without serial properties."""
+    binary = resolve_adb_binary()
+    for args in (['getprop', 'ro.serialno'], ['getprop', 'ro.boot.serialno'],
+                 ['settings', 'get', 'secure', 'android_id']):
+        result = _run_adb(binary, ['-s', serial, 'shell', *args], os.environ.copy(), 8)
+        value = result.stdout.strip()
+        if (result.returncode == 0 and re.fullmatch(r'[A-Za-z0-9._-]{3,128}', value)
+                and value.lower() not in ('unknown','null','none')):
+            return ('android-' if args[0] == 'settings' else '') + value
+    raise AndroidConnectionError('无法核定设备身份，为避免重复控制同一设备，请恢复调试连接后重试')
+
+
 def _network_serial(serial):
     return bool(serial and re.fullmatch(r'(?:\[[0-9a-fA-F:]+\]|[^:\s]+):\d+', serial))
 

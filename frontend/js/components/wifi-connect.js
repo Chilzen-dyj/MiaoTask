@@ -5,7 +5,7 @@
   let snapshot, requesting = false, finding = false, reflectedSerial = '';
   const ids = ['wifi-pair','wifi-connect','wifi-discover','wifi-pair-address','wifi-connect-address','wifi-code'];
   function render() {
-    const busy = requesting || snapshot?.busy || ['running','connecting','scanning','paused','stopping'].includes(snapshot?.status);
+    const busy = !snapshot || requesting || snapshot?.busy || ['running','connecting','scanning','paused','stopping'].includes(snapshot?.status);
     for (const id of ids) byId(id).disabled = Boolean(busy || id === 'wifi-discover' && finding);
   }
   function mode(first) {
@@ -78,5 +78,10 @@
       }
     }
     if (!snapshot.connected) reflectedSerial = '';
+  });
+  window.addEventListener('miaotask:device-selected',()=>{
+    snapshot=undefined;reflectedSerial='';render();
+    for(const id of ['wifi-code','wifi-pair-address','wifi-connect-address'])byId(id).value='';
+    status.textContent='请为当前设备工作区填写连接信息。';
   });
 })();

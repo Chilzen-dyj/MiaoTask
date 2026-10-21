@@ -2,14 +2,24 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light"><title>MiaoTask · 双11任务助手</title>
+  <meta name="color-scheme" content="light"><title>MiaoTask · 设备任务工作台</title>
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/miaotask-32.png"><link rel="icon" type="image/png" sizes="16x16" href="/assets/miaotask-16.png"><link rel="apple-touch-icon" sizes="180x180" href="/assets/miaotask-180.png">
-  <link rel="stylesheet" href="/css/base.css"><script src="/js/api.js" defer></script><script src="/js/components/activity-selector.js" defer></script><script src="/js/components/wifi-connect.js" defer></script><script src="/js/app.js" defer></script>
+  <link rel="stylesheet" href="/css/base.css"><script src="/js/api.js" defer></script><script src="/js/components/activity-selector.js" defer></script><script src="/js/components/wifi-connect.js" defer></script><script src="/js/components/device-manager.js" defer></script><script src="/js/app.js" defer></script>
 </head>
 <body>
-  <header class="topbar"><a class="brand" href="/" aria-label="MiaoTask 首页"><span class="brand-icon"><img src="/assets/miaotask-64.png" srcset="/assets/miaotask-128.png 2x" width="40" height="40" alt=""></span><span class="brand-name">MiaoTask</span><span class="brand-edition">双11助手</span></a><div class="top-meta"><span class="local-dot"></span> 本地运行<span class="divider"></span><span>DOUBLE 11 / 2026</span><a href="/api/report" download title="下载当前任务和日志">导出记录 ↗</a></div></header>
+  <header class="topbar"><a class="brand" href="/" aria-label="MiaoTask 首页"><span class="brand-icon"><img src="/assets/miaotask-64.png" srcset="/assets/miaotask-128.png 2x" width="40" height="40" alt=""></span><span class="brand-name">MiaoTask</span><span class="brand-edition">任务助手</span></a><div class="top-meta"><span class="local-dot"></span> 本地运行<span class="divider"></span><span>MULTI-DEVICE / LOCAL</span><a href="/api/report" download title="下载当前任务和日志">导出记录 ↗</a></div></header>
   <main>
-    <div class="page-heading"><div><div class="eyebrow">你的双11任务工作台</div><h1>把重复浏览，交给助手<span>。</span></h1><p>连接手机，一键识别并执行。每次返回，重新核验。</p></div><div class="status-pill" id="connection-label"><span></span>等待连接</div></div>
+    <div class="page-heading"><div><div class="eyebrow">你的手机任务工作台</div><h1>把重复浏览，交给助手<span>。</span></h1><p>连接手机，一键识别并执行。每次返回，重新核验。</p></div><div class="status-pill" id="connection-label"><span></span>等待连接</div></div>
+    <section class="card device-manager" aria-label="多设备管理">
+      <div class="device-toolbar"><h2>设备工作区</h2><button type="button" class="button" id="add-device">＋ 添加设备</button><button type="button" class="text-button" id="remove-device">移除当前设备</button></div>
+      <div id="device-tabs" role="tablist" aria-label="切换设备"></div>
+      <div class="device-batch"><span>勾选设备后：</span><button type="button" class="feature-button" id="batch-run">应用当前设置并启动</button><button type="button" class="text-button" id="batch-open-app">唤醒所选应用</button><button type="button" class="text-button" id="batch-stop">停止所选设备</button><span id="batch-result" role="status"></span></div>
+      <section id="add-device-panel" hidden aria-label="添加设备">
+        <p class="field-hint">每台设备独立执行、暂停和保存记录。添加后可连接 USB、模拟器，或使用下方 Wi-Fi 向导配对。</p>
+        <div class="connection-grid"><label>设备名称<input id="new-device-name" maxlength="60" placeholder="例如：平板、横屏模拟器"></label><label>选择已发现设备<select id="new-device-address"><option value="">先添加，稍后连接</option></select></label><button type="button" class="button dark" id="confirm-add-device">添加</button></div>
+        <button type="button" class="text-button" id="refresh-device-list">↻ 检测已连接设备</button><button type="button" class="text-button" id="find-emulators">查找 MuMu 模拟器</button><p id="add-device-message" class="field-hint" role="status"></p>
+      </section>
+    </section>
     <div class="workspace">
       <section class="main-column">
         <section class="card setup-card" aria-labelledby="setup-title"><div class="section-heading"><h2 id="setup-title"><span class="step">01</span>设备与活动</h2><button class="text-button" id="discover">↻ 检测设备</button></div>
@@ -95,7 +105,7 @@
         <footer>每一步都有回程。<span>仅本机访问 · 截图识别在本地完成 · <span id="app-version"></span></span></footer>
       </section>
       <aside class="side-column"><section class="card preview-card"><div class="section-heading"><h2><span class="live-dot"></span>手机画面</h2><button class="text-button" id="capture" disabled>刷新 ↻</button></div><div class="phone"><div class="phone-screen"><img id="phone-image" alt="连接手机后的屏幕预览" hidden><div id="phone-placeholder"><svg viewBox="0 0 48 64" aria-hidden="true"><rect x="9" y="3" width="30" height="56" rx="6"/><path d="M19 9h10M21 52h6"/></svg><span>等待手机连接</span><small>让任务有迹可循</small></div></div></div><div class="preview-meta"><span id="preview-source">尚未读取页面</span><span id="preview-time">—</span></div><div class="package-name" id="package-name">设备未连接</div></section>
-      <section class="help-card"><span class="help-number">小提示 / 01</span><h3>开始之前，自动核定。</h3><p>默认自动恢复淘宝并进入赚能量任务列表。每次开始、返回都会读取当前任务，替换出的新任务也会更新。</p><div class="help-line"></div><p>遇到验证或登录请本人处理。处理后再次开始，助手会重新定位活动。滑块适配暂列待办，不自动尝试破解。</p><div class="help-line"></div><p>今日统计按设备与淘宝实例分别保存。当天确认缺失的应用再次启动也会跳过，第二天重新尝试。实际刷新速度受设备截图与本地识别耗时影响。</p></section>
+      <section class="help-card"><span class="help-number">小提示 / 01</span><h3>开始之前，自动核定。</h3><p>默认自动恢复所选应用并进入活动任务列表。每次开始、返回都会读取当前任务，替换出的新任务也会更新。</p><div class="help-line"></div><p>遇到验证或登录请本人处理。处理后再次开始，助手会重新定位活动。滑块适配暂列待办，不自动尝试破解。</p><div class="help-line"></div><p>今日统计按设备与应用实例分别保存。当天确认缺失的应用再次启动也会跳过，第二天重新尝试。实际刷新速度受设备截图与本地识别耗时影响。</p></section>
       </aside>
     </div>
   </main><div class="toast" id="toast" role="alert" hidden></div><div class="app-exit"><p id="service-hint">关闭网页后助手仍在后台；Windows 可在右下角托盘打开控制台或退出。</p><button id="shutdown" class="text-button">退出助手</button></div>

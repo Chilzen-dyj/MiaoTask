@@ -1,7 +1,11 @@
 'use strict';
+let selectedDevice = 'default';
 window.MiaoAPI = Object.freeze({
-  async request(path, {method='GET', payload, token='', timeout=8000}={}) {
-    const response = await fetch(path, {method, cache:'no-store', signal:AbortSignal.timeout(timeout),
+  get device(){return selectedDevice;},
+  selectDevice(id){selectedDevice=id;},
+  url(path, device=selectedDevice){const url=new URL(path,location.origin);url.searchParams.set('device',device);return url.pathname+url.search;},
+  async request(path, {method='GET', payload, token='', timeout=8000, device=selectedDevice}={}) {
+    const response = await fetch(this.url(path,device), {method, cache:'no-store', signal:AbortSignal.timeout(timeout),
       headers:payload===undefined?{}:{'Content-Type':'application/json','X-Miao-Token':token},
       body:payload===undefined?undefined:JSON.stringify(payload)});
     const result = await response.json();
