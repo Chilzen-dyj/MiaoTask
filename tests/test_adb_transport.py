@@ -151,8 +151,8 @@ class AdbTransportTests(unittest.TestCase):
 
     def test_frozen_helper_uses_the_same_bundled_executable_as_main(self):
         with tempfile.TemporaryDirectory() as folder:
-            tools = Path(folder) / 'tools'
-            tools.mkdir()
+            tools = Path(folder) / 'shared' / 'tools'
+            tools.mkdir(parents=True)
             executable = tools / 'adb.exe'
             executable.write_bytes(b'test-executable')
             with patch.dict(os.environ, {'ADBUTILS_ADB_PATH': ''}), patch.object(

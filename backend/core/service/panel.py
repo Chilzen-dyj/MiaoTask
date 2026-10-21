@@ -284,9 +284,17 @@ class Controller(PreviewWorker):
                 if (payload.get('app', self.registration.app.id) != self.registration.app.id
                         or payload.get('activity', self.registration.activity.id) != self.registration.activity.id):
                     raise ValueError('请先选择对应应用和活动')
-                if action not in ('connect', 'scan', 'run', 'capture', 'configure', 'select_instance', 'refresh_instances'):
+                if action not in ('connect', 'wifi_pair', 'wifi_connect', 'scan', 'run', 'capture', 'configure', 'select_instance', 'refresh_instances'):
                     raise ValueError('未知操作')
-                if action not in ('connect', 'configure') and self.device is None:
+                if action in ('wifi_pair', 'wifi_connect'):
+                    from backend.core.device.wifi import endpoint, pairing_code
+                    address = payload.get('connect_address')
+                    serial = endpoint(address) if action == 'wifi_connect' or address else None
+                    payload = dict(payload, serial=serial, device_type='uiautomator2')
+                    if action == 'wifi_pair':
+                        payload['pair_address'] = endpoint(payload.get('pair_address'))
+                        payload['pair_code'] = pairing_code(payload.get('pair_code'))
+                if action not in ('connect', 'wifi_pair', 'wifi_connect', 'configure') and self.device is None:
                     raise ValueError('请先连接设备')
                 config = copy.deepcopy(self.state['config'])
                 overrides = payload.get('config', {})
@@ -314,10 +322,10 @@ class Controller(PreviewWorker):
                     self.update(config=config)
                 else:
                     self.control = RunControl()
-                    self.update(config=config, status={'connect': 'connecting', 'scan': 'scanning',
+                    self.update(config=config, status={'connect': 'connecting', 'wifi_pair': 'connecting', 'wifi_connect': 'connecting', 'scan': 'scanning',
                                                       'run': 'running', 'capture': 'scanning',
                                                       'select_instance': 'scanning', 'refresh_instances': 'scanning'}[action],
-                                message='正在连接手机' if action == 'connect' else '正在读取手机页面')
+                                message='正在连接手机' if action in ('connect', 'wifi_pair', 'wifi_connect') else '正在读取手机页面')
                     self.thread = threading.Thread(target=self._work, args=(action, payload, config), daemon=True,
                                                    name='miao-device-worker')
                     self.thread.start()
@@ -331,7 +339,19 @@ class Controller(PreviewWorker):
     def _work(self, action, payload, config):
         self._last_failure_stamp = 0.0
         try:
-            if action == 'connect':
+            if action == 'wifi_pair':
+                from backend.core.device.wifi import pair_wifi
+                try:
+                    pair_wifi(payload['pair_address'], payload.pop('pair_code'), self._connection_status)
+                finally:
+                    payload.pop('pair_code', None)
+                self.control.check()
+                self.update(wifi_paired=True)
+                if not payload.get('serial'):
+                    self.update(status='ready' if self.device else 'disconnected', phase='ready' if self.device else 'idle',
+                                message='配对成功；关闭手机配对弹窗，填写无线调试主页面的连接地址，再点击连接')
+                    return
+            if action in ('connect', 'wifi_pair', 'wifi_connect'):
                 from backend.core.device.adapter import DeviceAdapter
                 # A failed attempt to choose another phone must not leave the
                 # previous phone looking connected or export its diagnostics.
@@ -352,6 +372,10 @@ class Controller(PreviewWorker):
                 serial = payload.get('serial') or None
                 if kind not in ('uiautomator2', 'hmdriver2') or (serial and (not isinstance(serial, str) or len(serial) > 128)):
                     raise ValueError('设备类型或序列号无效')
+                if action in ('wifi_pair', 'wifi_connect'):
+                    from backend.core.device.wifi import connect_wifi
+                    self.control.check()
+                    serial = connect_wifi(serial, self._connection_status)
                 device = DeviceAdapter(kind, serial, on_status=self._connection_status,
                                        application=self.registration.app.profile)
                 info = device.current_app()
@@ -435,10 +459,11 @@ class Controller(PreviewWorker):
             self._finish_active_queue('error')
             self.interrupt_records('执行中断，本次进度尚未核验')
             logger.exception('设备操作失败')
-            self.update(status='error', phase='connect_failed' if action == 'connect' else 'error',
+            self.update(status='error', phase='connect_failed' if action in ('connect', 'wifi_pair', 'wifi_connect') else 'error',
                         message=f'{type(exc).__name__}: {exc}', remaining=0)
             self.on_failure(dict(reason=f'{type(exc).__name__}: {exc}', phase='error', kind='exception'))
         finally:
+            payload.pop('pair_code', None)
             if action in ('run', 'scan') and self.device is not None and not self.control.stopped.is_set():
                 try:
                     self.on_image(self.device.screenshot())
@@ -544,6 +569,12 @@ def make_handler(controller, token):
                 self.reply(200, dict(app='miao-task', version=version()))
             elif path == '/api/devices':
                 self.reply(200, discover_devices())
+            elif path == '/api/wifi/devices':
+                from backend.core.device.wifi import discover_wifi
+                try:
+                    self.reply(200, discover_wifi())
+                except ConnectionError as exc:
+                    self.reply(200, dict(services=[], devices=[], errors=[str(exc)]))
             elif path in ('/api/screenshot', '/api/preview'):
                 with controller.lock:
                     data = controller.image
@@ -597,7 +628,8 @@ def make_handler(controller, token):
                     self.reply(200, controller.diagnostics(), 'application/zip')
                     return
                 action = path.removeprefix('/api/')
-                action = {'session/start': 'run', 'session/pause': 'pause', 'session/resume': 'resume', 'session/stop': 'stop'}.get(action, action)
+                action = {'session/start': 'run', 'session/pause': 'pause', 'session/resume': 'resume', 'session/stop': 'stop',
+                          'wifi/pair': 'wifi_pair', 'wifi/connect': 'wifi_connect'}.get(action, action)
                 controller.dispatch(action, payload)
                 self.reply(202, {'ok': True})
             except (ValueError, TypeError) as exc:

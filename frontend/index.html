@@ -4,7 +4,7 @@
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light"><title>MiaoTask · 双11任务助手</title>
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/miaotask-32.png"><link rel="icon" type="image/png" sizes="16x16" href="/assets/miaotask-16.png"><link rel="apple-touch-icon" sizes="180x180" href="/assets/miaotask-180.png">
-  <link rel="stylesheet" href="/css/base.css"><script src="/js/api.js" defer></script><script src="/js/components/activity-selector.js" defer></script><script src="/js/app.js" defer></script>
+  <link rel="stylesheet" href="/css/base.css"><script src="/js/api.js" defer></script><script src="/js/components/activity-selector.js" defer></script><script src="/js/components/wifi-connect.js" defer></script><script src="/js/app.js" defer></script>
 </head>
 <body>
   <header class="topbar"><a class="brand" href="/" aria-label="MiaoTask 首页"><span class="brand-icon"><img src="/assets/miaotask-64.png" srcset="/assets/miaotask-128.png 2x" width="40" height="40" alt=""></span><span class="brand-name">MiaoTask</span><span class="brand-edition">双11助手</span></a><div class="top-meta"><span class="local-dot"></span> 本地运行<span class="divider"></span><span>DOUBLE 11 / 2026</span><a href="/api/report" download title="下载当前任务和日志">导出记录 ↗</a></div></header>
@@ -15,6 +15,34 @@
         <section class="card setup-card" aria-labelledby="setup-title"><div class="section-heading"><h2 id="setup-title"><span class="step">01</span>设备与活动</h2><button class="text-button" id="discover">↻ 检测设备</button></div>
           <details class="activity-manager" style="margin:16px 0"><summary>应用与活动</summary><div class="device-grid" style="margin-top:12px"><label>应用<select id="activity-app" aria-label="应用"></select></label><label>活动<select id="activity-choice" aria-label="活动"></select></label><button type="button" class="button" id="activity-apply">选择活动</button></div></details><form id="settings-form"><div class="connection-grid"><label>设备平台<select id="device-type"><option value="uiautomator2">Android · 安卓</option><option value="hmdriver2">HarmonyOS · 鸿蒙</option></select></label><label class="device-field">设备 / 无线调试地址<input id="serial" placeholder="自动选择已连接手机" list="device-options" maxlength="128"><datalist id="device-options"></datalist></label><button type="button" class="button dark" id="connect">连接设备 <span>↗</span></button></div>
           <p class="field-hint" id="device-hint">请保持手机解锁，并开启 USB 调试。</p>
+          <details class="wifi-manager" id="wifi-manager">
+            <summary>通过 Wi-Fi 连接手机<span>无需数据线 · Android 11 及以上</span></summary>
+            <p class="field-hint">手机和电脑连接同一 Wi-Fi。在手机「设置 → 开发者选项 → 无线调试」中开启无线调试，并允许当前网络。不同系统的设置位置可能不同。</p>
+            <div class="settings-buttons" aria-label="无线连接方式">
+              <button type="button" class="feature-button is-open" id="wifi-first" aria-pressed="true">首次配对</button>
+              <button type="button" class="feature-button" id="wifi-known" aria-pressed="false">已经配对</button>
+              <button type="button" class="text-button" id="wifi-discover">↻ 查找无线设备</button>
+            </div>
+            <section id="wifi-pair-panel" aria-label="首次无线配对">
+              <h3>1. 配对这台电脑</h3>
+              <p class="field-hint">在手机点击「使用配对码配对设备」，按弹窗填写下方两项。点击配对后请保持弹窗打开，旧配对码失效时重新填写。</p>
+              <div class="connection-grid">
+                <label>弹窗里的 IP 地址和端口<input id="wifi-pair-address" placeholder="例如 192.168.1.8:37123" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="128" list="wifi-pair-options"><datalist id="wifi-pair-options"></datalist></label>
+                <label>六位 Wi-Fi 配对码<input id="wifi-code" type="password" inputmode="numeric" placeholder="手机配对弹窗显示的 6 位数字" maxlength="6" autocomplete="off"></label>
+                <button type="button" class="button" id="wifi-pair">配对手机</button>
+              </div>
+              <p class="field-hint">配对码仅用于本次配对，不写入日志或设置。</p>
+            </section>
+            <section aria-label="连接已配对手机">
+              <h3 id="wifi-connect-title">2. 连接手机</h3>
+              <p class="field-hint">配对成功后关闭手机配对弹窗，填写「无线调试」主页面的 IP 地址和端口。<strong>这是连接端口，通常与刚才的配对端口不同。</strong></p>
+              <div class="wifi-connect-grid">
+                <label>无线调试主页面的 IP 地址和端口<input id="wifi-connect-address" placeholder="例如 192.168.1.8:40567" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="128" list="wifi-connect-options"><datalist id="wifi-connect-options"></datalist></label>
+                <button type="button" class="button dark" id="wifi-connect">无线连接</button>
+              </div>
+            </section>
+            <p id="wifi-status" class="field-hint" role="status" aria-live="polite">无法自动发现时也可以手动填写地址；校园网可能限制手机和电脑互访，可改用同一个个人热点。重开无线调试或换网后，请核对新地址。</p>
+          </details>
           <div class="setup-divider"></div>
           <div class="run-mode"><div><span class="field-label">活动入口</span><span class="campaign-name"><span id="activity-name">淘金币双11狂享20亿</span></span></div><label class="radio"><input type="radio" name="mode" value="auto" checked>自动进入活动</label><span id="entry-mode-note" class="mode-note" hidden>从当前页面开始</span></div>
           <div class="feature-toolbar" aria-label="可选功能与执行设置">

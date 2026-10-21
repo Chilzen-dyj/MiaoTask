@@ -26,7 +26,7 @@ def resolve_adb_binary():
             raise AndroidConnectionError('配置的 ADB 程序不存在，请重新解压完整便携包')
         return str(candidate.resolve())
     if getattr(sys, 'frozen', False):
-        candidate = Path(sys._MEIPASS) / 'tools' / 'adb.exe'
+        candidate = Path(sys._MEIPASS) / 'shared' / 'tools' / 'adb.exe'
         if not candidate.is_file():
             raise AndroidConnectionError('便携包缺少 ADB，请完整解压后再运行')
         return str(candidate.resolve())
@@ -113,13 +113,14 @@ def prepare_android_connection(serial=None, on_status=None, timeout=45):
     def devices():
         return list_android_devices(binary, timeout=remaining(), env=env)
 
-    notify('正在连接 ADB；首次连接请保持手机解锁，留意 USB 调试授权弹窗')
+    network = _network_serial(serial)
+    notify('正在确认无线设备授权；请保持手机解锁并开启无线调试' if network else
+           '正在连接 ADB；首次连接请保持手机解锁，留意 USB 调试授权弹窗')
     if run(['start-server']).returncode:
         raise AndroidConnectionError('ADB 服务启动失败，请关闭其他占用 ADB 的程序后重试')
     found = devices()
     fallback_done = False
-    network = _network_serial(serial)
-    if not found and network and time.monotonic() < deadline:
+    if network and not any(d['serial'] == serial and d['state'] == 'device' for d in found) and time.monotonic() < deadline:
         notify('正在连接指定的无线调试设备')
         run(['connect', serial])
         found = devices()
@@ -152,9 +153,11 @@ def prepare_android_connection(serial=None, on_status=None, timeout=45):
                 raise AndroidConnectionError(f'设备当前处于 {state[:40]} 状态，请恢复正常 Android 系统后重试')
             if state != last_state:
                 if state in ('unauthorized', 'authorizing'):
-                    notify('请解锁手机，在“允许 USB 调试”弹窗点击允许；正在等待手机授权')
+                    notify('无线设备尚未授权，请检查配对状态并在手机确认调试授权' if network else
+                           '请解锁手机，在“允许 USB 调试”弹窗点击允许；正在等待手机授权')
                 else:
-                    notify('设备暂时离线，正在等待恢复；请检查数据线并保持手机解锁')
+                    notify('无线设备暂时离线，请检查 Wi-Fi、无线调试开关和连接端口' if network else
+                           '设备暂时离线，正在等待恢复；请检查数据线并保持手机解锁')
                 last_state = state
             # Each selected transport handshake lets Android display its own
             # RSA authorization dialog. Never accept it or replace ADB keys.
@@ -171,8 +174,12 @@ def prepare_android_connection(serial=None, on_status=None, timeout=45):
             break
         found = devices()
     if last_state in ('unauthorized', 'authorizing'):
+        if network:
+            raise AndroidConnectionError('等待无线调试授权超时，请确认手机配对状态后重新连接')
         raise AndroidConnectionError('等待手机 USB 调试授权超时。请解锁手机，在系统弹窗点击允许后重新连接')
     if last_state in ('offline', 'connecting'):
+        if network:
+            raise AndroidConnectionError('无线设备持续离线，请核对当前连接地址并保持手机和电脑在可互访的网络')
         raise AndroidConnectionError('设备一直处于离线状态，请重新连接数据线并确认手机 USB 调试授权')
     suffix = '，也已尝试 Windows 兼容方式' if fallback_done else ''
     raise AndroidConnectionError('未检测到可用的指定设备' + suffix + '；请检查 USB 调试、数据线或无线调试地址')
