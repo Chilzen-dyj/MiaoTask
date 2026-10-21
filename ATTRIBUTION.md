@@ -1,6 +1,6 @@
 # 项目来源与第三方组件
 
-喵任务双11助手基于 [MonsterNone/tmall-miao](https://github.com/MonsterNone/tmall-miao)
+MiaoTask（喵任务）双11助手基于 [MonsterNone/tmall-miao](https://github.com/MonsterNone/tmall-miao)
 的 `next` 分支改造，感谢原作者 MonsterNone 及上游贡献者。
 
 来源基准：[9318d3d138d5fa53cff00601740de012da831c65](https://github.com/MonsterNone/tmall-miao/tree/9318d3d138d5fa53cff00601740de012da831c65)。

@@ -20,6 +20,7 @@ PUBLIC_IMAGES = {
     'docs/assets/hero.png': 'png',
     'docs/assets/workflow.png': 'png',
     'docs/assets/console-desktop.webp': 'webp',
+    'docs/assets/console-v9.png': 'png',
     'docs/assets/settings-desktop.webp': 'webp',
     'docs/assets/results-desktop.webp': 'webp',
 }

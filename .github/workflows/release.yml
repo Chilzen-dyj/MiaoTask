@@ -15,6 +15,15 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+      - name: Verify tagged version and reviewed release notes
+        if: github.event_name == 'push'
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $version = (Get-Content -LiteralPath version.json -Raw | ConvertFrom-Json).version
+          if ($env:RELEASE_TAG -ne $version) { throw 'Tag must match version.json' }
+          if (-not (Test-Path -LiteralPath "docs/RELEASE-$version.md")) { throw 'Reviewed release notes are required' }
       - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
@@ -45,6 +54,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v7
         with:
           name: MiaoTask-windows-x64
@@ -63,5 +73,7 @@ jobs:
             exit 0
           }
           $releaseFiles = @(Get-ChildItem -LiteralPath release-assets -File | ForEach-Object { $_.FullName })
-          & gh release create $env:RELEASE_TAG @releaseFiles --draft --generate-notes --title "MiaoTask $env:RELEASE_TAG"
+          $notesFile = "docs/RELEASE-$($env:RELEASE_TAG).md"
+          if (-not (Test-Path -LiteralPath $notesFile)) { throw 'Reviewed release notes are required' }
+          & gh release create $env:RELEASE_TAG @releaseFiles --draft --notes-file $notesFile --title "MiaoTask $env:RELEASE_TAG"
           if ($LASTEXITCODE -ne 0) { throw 'Draft release creation failed' }
