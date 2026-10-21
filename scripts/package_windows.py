@@ -14,6 +14,21 @@ import sys
 import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
+PORTABLE_DOCS = ('USAGE.md', 'SAFETY.md', 'ATTRIBUTION.md', 'RELEASES.md')
+
+
+def copy_documentation(destination):
+    """Keep portable help in the same relative layout as the source docs."""
+    folder = destination / 'docs'
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in PORTABLE_DOCS:
+        shutil.copy2(ROOT / 'docs' / name, folder / name)
+    (destination / 'README.md').write_text(
+        '# MiaoTask\n\n'
+        '双击 `MiaoTask.exe`，保留 `_internal/`。升级前先退出旧助手。\n\n'
+        '[使用说明](docs/USAGE.md) · [风险与隐私](docs/SAFETY.md) · '
+        '[发布记录](docs/RELEASES.md) · [来源说明](docs/ATTRIBUTION.md)\n',
+        encoding='utf-8')
 
 
 def source_commit():
@@ -80,8 +95,7 @@ def main():
                     '--workpath', str(work), str(ROOT / 'build.spec')], env=env, cwd=ROOT, check=True)
     package = dist / 'MiaoTask'
     executable = package / 'MiaoTask.exe'
-    for name in ('PORTABLE_README.md', 'ATTRIBUTION.md', 'CHANGELOG.md'):
-        shutil.copy2(ROOT / name, package / name)
+    copy_documentation(package)
     licenses(package / 'licenses', adb_dir)
     from smoke_packaged import smoke
     smoke(executable, package / 'self-test.json')

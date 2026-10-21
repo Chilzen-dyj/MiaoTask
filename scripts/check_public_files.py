@@ -7,8 +7,7 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
 ROOT_FILES = {
-    '.gitignore', '.gitattributes', 'ATTRIBUTION.md', 'CHANGELOG.md', 'README.md',
-    'PORTABLE_README.md', 'RELEASING.md', 'main.py', 'build.spec', 'start.bat',
+    '.gitignore', '.gitattributes', 'README.md', 'main.py', 'build.spec', 'start.bat',
     'requirements.txt', 'requirements-build.txt', 'requirements-windows.lock', 'version.json',
 }
 SOURCE_DIRS = {'.github', 'configs', 'docs', 'modules', 'scripts', 'tests', 'web'}
@@ -17,11 +16,8 @@ PRIVATE_PARTS = {'runtime', 'private', 'screenshots', 'captures', 'reports', 'ba
 SOURCE_SUFFIXES = {'.py', '.md', '.json', '.yml', '.yaml', '.html', '.css', '.js', '.txt', '.lock'}
 # Individually reviewed documentation graphics only. Never allow arbitrary captures.
 PUBLIC_IMAGES = {
-    'docs/assets/hero.png': 'png',
-    'docs/assets/workflow.png': 'png',
     'docs/assets/console-desktop.webp': 'webp',
     'docs/assets/console-v9.png': 'png',
-    'docs/assets/settings-desktop.webp': 'webp',
     'docs/assets/results-desktop.webp': 'webp',
 }
 PUBLIC_IMAGES.update({f'web/assets/miaotask-{size}.png': 'png'

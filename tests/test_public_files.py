@@ -6,7 +6,7 @@ from scripts.check_public_files import audit_file
 class PublicFilesTests(unittest.TestCase):
     def test_public_source_and_docs_are_allowed(self):
         for name in ('main.py', 'modules/device_adapter.py', 'configs/double11.json',
-                     '.github/workflows/release.yml', 'docs/PRIVACY.md'):
+                     '.github/workflows/release.yml', 'docs/SAFETY.md'):
             self.assertEqual(audit_file(name, b'public source'), [])
 
     def test_local_directories_and_binary_artifacts_are_rejected(self):
@@ -21,12 +21,12 @@ class PublicFilesTests(unittest.TestCase):
     def test_only_reviewed_image_paths_and_signatures_are_allowed(self):
         png = b'\x89PNG\r\n\x1a\n\0public illustration'
         webp = b'RIFF\0\0\0\0WEBPpublic screenshot'
-        self.assertEqual(audit_file('docs/assets/hero.png', png), [])
+        self.assertEqual(audit_file('docs/assets/console-v9.png', png), [])
         self.assertEqual(audit_file('docs/assets/console-desktop.webp', webp), [])
         self.assertTrue(audit_file('docs/assets/phone-private.png', png))
-        self.assertTrue(audit_file('docs/assets/hero.png', b'not a PNG'))
+        self.assertTrue(audit_file('docs/assets/console-v9.png', b'not a PNG'))
         self.assertTrue(audit_file('docs/assets/console-desktop.webp', png))
-        self.assertTrue(audit_file('docs/assets/hero.png', png + b'x' * 2_000_000))
+        self.assertTrue(audit_file('docs/assets/console-v9.png', png + b'x' * 2_000_000))
 
     def test_tokens_are_rejected_without_echoing_the_value(self):
         token = b'gh' + b'p_' + b'x' * 36

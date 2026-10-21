@@ -1,10 +1,8 @@
-# 源码运行与二次开发
-
-面向开发者；下载便携版请先看 [项目首页](../README.md)。
+# 开发与设计
 
 ## 源码运行
 
-开发与发布验证环境为 Python 3.13。需要 Android ADB 或 HarmonyOS HDC，并已允许手机调试。
+使用 Python 3.13，准备可用的 Android ADB；手机保持解锁并允许调试。HarmonyOS 驱动接口需要另行提供 HDC，当前便携包不包含 HDC。
 
 ```powershell
 git clone https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11.git
@@ -14,56 +12,58 @@ python -m venv .venv
 .\.venv\Scripts\python.exe main.py
 ```
 
-Windows 可使用 `start.bat`。网页默认自动定位淘宝活动，一键开始会先重新读取任务；普通返回失效时可重开淘宝，再寻找首页活动入口，找不到时尝试搜索活动词。
-v9 支持按包名与 Android 用户空间选择分身；默认关闭，需要时在网页展开「应用分身」，可调整顺序串行执行。当前已有红米主应用与用户空间 999 分身的代表性实测，其他厂商与第三方容器需另行验证，见 [v9 验证记录](PREVIEW-v9.md)。
+Windows 也可用 `start.bat`。网页无需 npm 或额外构建步骤。命令行参数示例：
 
 ```powershell
-# 只识别任务，自动选择已连接手机
-python main.py --cli --scan
-
-# 指定手机并限制本轮次数
-python main.py --cli --serial YOUR_SERIAL --max-tasks 5
-
-# 指定 Android 淘宝分身（用户空间以手机实际发现结果为准）
-python main.py --cli --instance com.taobao.taobao@999 --auto-open --max-tasks 2
-
-# 鸿蒙、自动进入活动、关闭跨应用访问
-python main.py --cli --device harmony --auto-open --no-cross-app
-
-# 修改控制台端口
-python main.py --port 8766 --no-browser
+# 自动进入活动，限制本轮次数
+.\.venv\Scripts\python.exe main.py --cli --auto-open --max-tasks 2
+# 仅识别当前页面
+.\.venv\Scripts\python.exe main.py --cli --scan
+# 指定实际发现的 Android 用户空间（数字仅为示例）
+.\.venv\Scripts\python.exe main.py --cli --instance com.taobao.taobao@999 --auto-open
+# 修改网页端口
+.\.venv\Scripts\python.exe main.py --port 8766 --no-browser
 ```
 
-默认配置见 `configs/double11.json`。`--config 文件路径` 可加载覆盖项，设备信息无需写进公共配置。
-网页设置在当前服务期间保留。暂停时间不计入浏览时长；停止后保留手机现场。
-CLI 仍保留 `--scan` 供开发调试，网页已将识别并入开始按钮。详细路径和数据结构见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+`--serial` 指定设备，`--config` 加载公共配置覆盖项，完整参数见 `main.py --help`。默认活动规则在 `configs/double11.json`，不保存个人设备信息。
 
-## 本地数据与诊断
+## 模块职责
 
-源码模式写入 `runtime/`，便携模式写入 `%LOCALAPPDATA%\MiaoTask`，可由 `MIAO_DATA_DIR` 覆盖。
-每台设备以驱动类型和实际标识计算哈希键，按本机自然日存储 `daily/YYYY-MM-DD/<device_key>/`。
-主应用保留旧路径；其他实例在其下使用 `instances/<instance_hash>/`，分别累计与导出，避免共用缺失应用事实。
-当天 `state.json` 保存增量累计统计及不可用任务，`events.jsonl` 保存日志；`failures/` 保存失败 JSON 和可取得的截图。
-重新扫描不会累计同一批执行数，同日重开会延续记录，跨日另建一份并重新判断应用可用性。
+| 路径 | 职责 |
+| --- | --- |
+| `main.py` | 网页 / CLI 入口与运行时初始化 |
+| `modules/campaign.py` | 任务选择、浏览、搜索、返回、核验和有限重试 |
+| `modules/task_model.py`、`screen_reader.py` | 任务解析及统一 UI / 本地 OCR 观察 |
+| `modules/device_adapter.py`、`adb_transport.py` | 驱动、设备发现、原生输入与连接兼容 |
+| `modules/app_instances.py` | 包名和 Android 用户空间的实例身份 |
+| `modules/daily_state.py` | 当日增量统计、不可用事实与诊断导出 |
+| `modules/control_panel.py` | 本地 HTTP、状态快照及单设备工作线程 |
+| `modules/browse_gestures.py` | 范围内变化的滚动参数 |
+| `modules/windows_tray.py`、`branding.py` | Windows 托盘与统一图标资源 |
+| `web/` | HTML、CSS 和 JavaScript 控制台 |
+| `scripts/`、`tests/` | 构建维护工具与回归用例 |
 
-控制台状态的 `stats` 表示本轮，`daily.stats` 表示该设备、所选实例当天累计；`image_sequence` 标记新预览。
-GET `/api/diagnostics` 下载当前设备、所选实例当天的诊断 ZIP。文字设备标识隐藏，截图不自动脱敏；样例测试必须使用模拟数据，不将真实记录提交仓库。
-同一设备、同一实例内切换账号仍共用当天统计；不同分身独立。见 [隐私说明](PRIVACY.md)。
+## 执行约束
 
-Android 实例操作显式传入 `--user`，具体命令见 [Android ADB 官方文档](https://developer.android.com/tools/adb)。前台身份来自当前焦点窗口的包名和用户字段；身份无法核定时不继续操作淘宝。Windows 托盘使用系统 API，无额外 GUI 依赖；关闭浏览器后停止额外预览截图，托盘退出会停止任务并关闭 HTTP 服务。
+流程为「观察 → 解析 → 执行 → 返回 → 核验 → 重读」。任务标题、进度和按钮配对后才操作；UI 树不可靠时使用本地 OCR 复核前台。搜索优先原生 `set_text`，重新定位右侧提交按钮，必要时回车；确认结果页后才浏览，不安装或切换输入法。
 
-## 测试、构建与发布
+任务完成依据为进度、完成标签或对应奖励状态；无法确认时不计成功。新替换任务拥有独立身份。任务尝试、返回层数、等待、列表滚动和整轮执行均有上限，恢复调用共享有限冷重启额度；认证等人工处理状态独立停止。
 
-```powershell
-python -m unittest discover -s tests -v
-python -m compileall -q main.py modules scripts tests
-python scripts/check_public_files.py
-```
+实例由包名与 Android 用户空间共同确定。启动、停止和恢复限定用户，操作前核对焦点窗口；身份不符或无法确认时停止。队列串行执行，记录按实例隔离，不读取账号标识。
 
-测试使用模拟设备，不连接真实手机。覆盖任务解析、搜索、原生输入、动态任务、跨应用恢复、有限重试、
-累计奖励、设备日统计与跨日重启、诊断导出、HTTP 校验和公共文件边界。
-前版代表性 Android 浏览、搜索及累计领奖已实机验证；本轮新增路径的验证范围以 [CHANGELOG](../CHANGELOG.md) 为准。
+HTTP 仅绑定本机，写操作校验 Host、Origin 与会话令牌。一个工作线程控制设备，预览通过 I/O 锁读取；新截图按序替换，短时缓存遇到操作或前台变化失效，失败现场使用新帧。无网页访问时停止额外预览，Windows 托盘负责重新打开和退出。
 
-构建器从已提交的干净源码生成全新目录，执行离线 OCR、内置 ADB、本地网页、浏览器请求头、重复启动及退出自检。
-GitHub Actions 可手动构建，版本标签会触发构建并生成 Release 草稿；正式发布可附加经验证的 ZIP 和校验文件。
-详细命令与清洁构建步骤见 [RELEASING.md](../RELEASING.md)。
+## 数据与接口
+
+源码数据默认位于 `runtime/`，便携版位于 `%LOCALAPPDATA%\MiaoTask`；`MIAO_DATA_DIR` 可覆盖位置。主应用使用 `daily/YYYY-MM-DD/<device_hash>/`，其他实例在其下的 `instances/<instance_hash>/` 独立记录。
+
+| 数据 | 含义 |
+| --- | --- |
+| `state.json` | 当日累计、计数水位与不可用任务 |
+| `events.jsonl` | 阶段变化与日志 |
+| `failures/` | 失败说明和可取得的原始截图 |
+| API `stats` / `daily.stats` | 本轮 / 当前实例今日累计 |
+| API `image_sequence` | 新截图序号 |
+| GET `/api/diagnostics` | 当前设备、所选实例当天的本地诊断 ZIP |
+
+接口和配置以当前代码为准。结构调整应独立提出迁移方案，避免让活动逻辑依赖网页布局或具体驱动细节。参与修改见[贡献规范](CONTRIBUTING.md)，验证、构建和发布见[测试与打包](BUILDING.md)。
