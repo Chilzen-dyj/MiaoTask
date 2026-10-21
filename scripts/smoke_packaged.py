@@ -48,6 +48,12 @@ def smoke(executable, output=None):
                         raise RuntimeError(f'Unexpected packaged response: {name}')
             with urlopen(base + '/api/state', timeout=5) as response:
                 state = json.load(response)
+            for asset in ('/assets/miaotask-32.png', '/assets/miaotask-128.png', '/favicon.ico'):
+                with urlopen(base + asset, timeout=5) as response:
+                    expected = b'\x00\x00\x01\x00' if asset.endswith('.ico') else b'\x89PNG\r\n\x1a\n'
+                    if not response.read().startswith(expected):
+                        raise RuntimeError(f'Packaged icon missing or invalid: {asset}')
+            result['brand_icons'] = True
             if state['connected']:
                 raise RuntimeError('Package should not connect to a device automatically')
             if state.get('version') != result['health']['version']:

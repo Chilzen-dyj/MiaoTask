@@ -23,6 +23,9 @@ PUBLIC_IMAGES = {
     'docs/assets/settings-desktop.webp': 'webp',
     'docs/assets/results-desktop.webp': 'webp',
 }
+PUBLIC_IMAGES.update({f'web/assets/miaotask-{size}.png': 'png'
+                      for size in (16, 20, 24, 32, 40, 48, 64, 128, 180, 256, 512, 1024)})
+PUBLIC_IMAGES.update({'web/assets/miaotask-master.png': 'png', 'web/assets/miaotask.ico': 'ico'})
 SECRET_PATTERNS = (
     re.compile(rb'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'),
     re.compile(rb'\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{50,})\b'),
@@ -51,7 +54,9 @@ def audit_file(name, content, forbidden=()):
         problems.append('binary or oversized source file')
     if image_type:
         valid = (image_type == 'png' and content.startswith(b'\x89PNG\r\n\x1a\n')
-                 or image_type == 'webp' and content.startswith(b'RIFF') and content[8:12] == b'WEBP')
+                 or image_type == 'webp' and content.startswith(b'RIFF') and content[8:12] == b'WEBP'
+                 or image_type == 'ico' and content.startswith(b'\x00\x00\x01\x00') and len(content) > 6
+                 and int.from_bytes(content[4:6], 'little') > 0)
         if not valid:
             problems.append('invalid public image format')
     if any(pattern.search(content) for pattern in SECRET_PATTERNS):

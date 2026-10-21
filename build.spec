@@ -29,6 +29,7 @@ a = Analysis([str(root / 'main.py')], pathex=[str(root)], binaries=binaries, dat
              excludes=['torch', 'tensorflow', 'paddle', 'matplotlib', 'pytest', 'IPython'], noarchive=False)
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='MiaoTask',
+          icon=str(root / 'web/assets/miaotask.ico'),
           debug=False, bootloader_ignore_signals=False, strip=False, upx=False,
           console=False, disable_windowed_traceback=False)
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='MiaoTask')

@@ -4,6 +4,7 @@ from ctypes import wintypes as w
 import os
 import threading
 import uuid
+from modules.branding import windows_icon_path
 
 
 class WindowsTray:
@@ -16,6 +17,7 @@ class WindowsTray:
         self.error = None
         self._exiting = False
         self._post_message = None
+        self.icon_loaded = False
 
     def start(self):
         if os.name != 'nt':
@@ -65,8 +67,9 @@ class WindowsTray:
                                          w.HWND, w.HMENU, w.HINSTANCE, w.LPVOID]
         user32.CreateWindowExW.restype = w.HWND
         user32.RegisterClassW.argtypes = [ctypes.POINTER(WindowClass)]
-        user32.LoadIconW.argtypes = [w.HINSTANCE, ctypes.c_void_p]
-        user32.LoadIconW.restype = w.HICON
+        user32.LoadImageW.argtypes = [w.HINSTANCE, w.LPCWSTR, w.UINT, ctypes.c_int, ctypes.c_int, w.UINT]
+        user32.LoadImageW.restype = w.HANDLE
+        user32.DestroyIcon.argtypes = [w.HICON]
         user32.CreatePopupMenu.restype = w.HMENU
         user32.AppendMenuW.argtypes = [w.HMENU, w.UINT, ctypes.c_size_t, w.LPCWSTR]
         user32.TrackPopupMenu.argtypes = [w.HMENU, w.UINT, ctypes.c_int, ctypes.c_int,
@@ -87,6 +90,7 @@ class WindowsTray:
         instance = kernel32.GetModuleHandleW(None)
         taskbar_created = user32.RegisterWindowMessageW('TaskbarCreated')
         icon = None
+        owned_icon = None
         registered = False
 
         @proc_type
@@ -129,16 +133,21 @@ class WindowsTray:
             return user32.DefWindowProcW(hwnd, message, wp, lp)
 
         try:
-            cls = WindowClass(proc=window_proc, instance=instance, name=name)
+            size = user32.GetSystemMetrics(49) or 16  # SM_CXSMICON, respect the current DPI
+            owned_icon = user32.LoadImageW(None, str(windows_icon_path()), 1, size, size, 0x0010)
+            if not owned_icon:
+                raise ctypes.WinError(ctypes.get_last_error())
+            self.icon_loaded = True
+            cls = WindowClass(proc=window_proc, instance=instance, icon=owned_icon, name=name)
             if not user32.RegisterClassW(ctypes.byref(cls)):
                 raise ctypes.WinError(ctypes.get_last_error())
             registered = True
-            self.hwnd = user32.CreateWindowExW(0, name, '喵任务', 0, 0, 0, 0, 0, None, None, instance, None)
+            self.hwnd = user32.CreateWindowExW(0, name, 'MiaoTask', 0, 0, 0, 0, 0, None, None, instance, None)
             if not self.hwnd:
                 raise ctypes.WinError(ctypes.get_last_error())
             icon = NotifyIcon(size=ctypes.sizeof(NotifyIcon), window=self.hwnd, id=1,
                               flags=1 | 2 | 4, callback=0x8001,
-                              icon=user32.LoadIconW(None, 32512), tip='喵任务 · 双击打开控制台，右键退出助手')
+                              icon=owned_icon, tip='MiaoTask · 双击打开控制台，右键退出助手')
             if not shell32.Shell_NotifyIconW(0, ctypes.byref(icon)):
                 raise ctypes.WinError(ctypes.get_last_error())
             self.ready.set()
@@ -157,3 +166,5 @@ class WindowsTray:
                 self.hwnd = None
             if registered:
                 user32.UnregisterClassW(name, instance)
+            if owned_icon:
+                user32.DestroyIcon(owned_icon)

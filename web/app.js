@@ -5,20 +5,39 @@ const statusLabels = {disconnected:'等待连接',connecting:'正在连接',read
 const phaseLabels = {locating:'LOCATING CAMPAIGN',ready:'READY TO GO',opening:'OPENING TASK',browsing:'BROWSING IN PROGRESS',returning:'BACK TO YOUR TASKS',scanning:'FINDING MORE TASKS',finished:'SESSION FINISHED',stopped:'SESSION STOPPED',needs_attention:'YOUR ATTENTION NEEDED'};
 const taskLabels = {pending:'待执行',running:'执行中',done:'已核验',manual:'手动处理',failed:'未通过',disabled:'已跳过'};
 const kindLabels = {browse:'浏览',search:'搜索',visit:'跳转',claim:'领奖',manual:'手动',done:'完成'};
-let instanceHash='', queueOrder=[];
+let instanceHash='', queueOrder=[], clonesEnabled=false, settingsSection=null;
 let state, token='', filter='all', taskHash='', logsHash='', initialized=false, requesting=false, toastTimer;
 let pollRequest=null, pollTimer, previewTimer, previewRequest=null, previewReady=false, pageActive=true, lastPreviewSequence=null, polling=false, previewing=false;
 const clockText=seconds=>{seconds=Math.max(0,Math.floor(seconds||0));return `${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`;};
 function el(tag, cls, text) {const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;}
 function toast(text){$('toast').textContent=text;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,6000);}
 function config(){const swipes={};for(const name of ['distance','duration','interval','burst'])for(const bound of ['min','max'])swipes['swipe_'+name+'_'+bound]=Number($('swipe-'+name+'-'+bound).value)/(name==='distance'?100:1);return {...swipes,default_browse_seconds:Number($('browse-seconds').value),browse_extra_seconds:Number($('browse-extra').value),max_attempts:Number($('max-attempts').value),max_tasks:Number($('max-tasks').value),enabled_task_kinds:['browse','search','visit','claim'].filter(k=>$('kind-'+k).checked),allow_cross_app:$('cross-app').checked,ocr:$('ocr').checked,scroll_browse:$('scroll').checked,claim_rewards:$('claim').checked};}
+function defaultInstanceId(){const instances=state?.app_instances||[];return (instances.find(i=>i.user_id===0&&i.package==='com.taobao.taobao')||instances.find(i=>i.user_id===0)||instances[0])?.id||'';}
+function showSettings(name){
+  settingsSection=name;
+  for(const button of document.querySelectorAll('[data-settings-toggle]')){const active=button.dataset.settingsToggle===name;button.classList.toggle('is-open',active);button.setAttribute('aria-expanded',String(active));}
+  for(const panel of document.querySelectorAll('[data-settings-panel]'))panel.hidden=panel.dataset.settingsPanel!==name;
+  $('settings-save').hidden=!name;
+}
+function updateSettingsSummary(){
+  const base=$('browse-seconds').value,extra=$('browse-extra').value,limit=$('max-tasks').value;
+  $('settings-summary').textContent=base&&extra&&limit?`浏览${base}秒 + 额外${extra}秒 · 本轮最多${limit}次`:'请完善执行设置';
+  $('entry-mode-note').hidden=document.querySelector('input[name=mode]:checked').value==='auto';
+}
+function validateSettingsForm(){
+  for(const name of ['distance','duration','interval','burst']){const low=$('swipe-'+name+'-min'),high=$('swipe-'+name+'-max');high.setCustomValidity(low.value&&high.value&&Number(low.value)>Number(high.value)?'最大值不能小于最小值':'');}
+  const invalid=$('settings-form').querySelector(':invalid');
+  if(invalid){const panel=invalid.closest('[data-settings-panel]');if(panel)showSettings(panel.dataset.settingsPanel);invalid.focus();}
+  return $('settings-form').reportValidity();
+}
 async function action(name, extra={}){
   if(requesting)return;
-  if(['run','connect','configure'].includes(name)&&!$('settings-form').reportValidity())return;
-  if(name==='run'&&!config().enabled_task_kinds.length){toast('请至少选择一种本轮任务类型');return;}
+  if(['run','connect','configure'].includes(name)&&!validateSettingsForm())return;
+  if(name==='run'&&!config().enabled_task_kinds.length){showSettings('tasks');toast('请至少选择一种本轮任务类型');return;}
   requesting=true;
-  try{const payload={...extra,config:config(),auto_open:document.querySelector('input[name=mode]:checked').value==='auto'};
-    if(name==='run'){payload.instance_ids=$('sequence-instances').checked?queueOrder:[$('app-instance').value];if(!payload.instance_ids.length)throw new Error('请至少选择一个淘宝实例');if($('sequence-instances').checked)payload.auto_open=true;}
+  try{const payload={...extra,auto_open:document.querySelector('input[name=mode]:checked').value==='auto'};
+    if(['run','connect','configure'].includes(name))payload.config=config();
+    if(name==='run'){const queued=clonesEnabled&&$('sequence-instances').checked;payload.instance_ids=queued?queueOrder:[clonesEnabled?$('app-instance').value:defaultInstanceId()];if(!payload.instance_ids.length||payload.instance_ids.some(id=>!id))throw new Error('请至少选择一个淘宝实例');if(queued)payload.auto_open=true;}
     if(name==='connect'){payload.device_type=$('device-type').value;payload.serial=$('serial').value.trim();}
     const response=await fetch('/api/'+name,{method:'POST',headers:{'Content-Type':'application/json','X-Miao-Token':token},body:JSON.stringify(payload)});
     const result=await response.json();if(!response.ok)throw new Error(result.error||'操作失败');if(name==='shutdown'){toast('助手已退出，可以关闭此页面');return;}if(name==='configure')toast('执行设置已应用');await poll();
@@ -35,6 +54,10 @@ async function discover(){
 }
 function renderInstances(busy){
   const instances=state.app_instances||[], hash=JSON.stringify(instances);
+  $('toggle-instances').disabled=busy;$('instance-panel').hidden=!clonesEnabled;$('toggle-instances').setAttribute('aria-expanded',String(clonesEnabled));$('toggle-instances').classList.toggle('is-open',clonesEnabled);
+  const target=instances.find(i=>i.id===(busy||clonesEnabled?state.selected_instance:defaultInstanceId()));
+  const queue=state.instance_queue||[],position=queue.findIndex(i=>i.status==='running');
+  $('instance-summary').textContent=(target?(busy?'执行中：':clonesEnabled?'已选：':'默认：')+target.label:'默认使用主应用')+(busy&&queue.length>1?` · 队列${position+1}/${queue.length}`:'');
   if(hash!==instanceHash){instanceHash=hash;const select=$('app-instance');select.replaceChildren();for(const item of instances){const option=el('option','',item.label);option.value=item.id;select.append(option);}if(!instances.length){select.append(el('option','','未发现可用淘宝实例'));}queueOrder=queueOrder.filter(id=>instances.some(i=>i.id===id));if(!queueOrder.length&&instances.length)queueOrder=[state.selected_instance||instances[0].id];renderInstanceOptions(busy);}
   $('app-instance').value=state.selected_instance||'';$('app-instance').disabled=busy||!instances.length;
   $('refresh-instances').disabled=busy||!state.connected;$('sequence-instances').disabled=busy||instances.length<2;
@@ -63,7 +86,7 @@ function render(){
   $('connection-label').className='status-pill'+(state.connected?' connected':'');$('connection-label').replaceChildren(el('span'),document.createTextNode(statusLabels[state.status]||state.status));
   $('connect').disabled=busy;$('connect').textContent=state.connected?'重新连接 ↗':'连接设备 ↗';
   for(const id of ['run','capture'])$(id).disabled=!state.connected||busy;
-  $('run').textContent=busy?'正在处理…':$('sequence-instances').checked?'▶ 按顺序执行':'▶ 开始自动执行';if(!(state.app_instances||[]).length)$('run').disabled=true;
+  $('run').textContent=busy?'正在处理…':clonesEnabled&&$('sequence-instances').checked?'▶ 按顺序执行':'▶ 开始自动执行';if(!(state.app_instances||[]).length)$('run').disabled=true;
   $('pause').disabled=!running&&!paused;$('pause').textContent=paused?'▶ 继续':'Ⅱ 暂停';$('stop').disabled=!busy||state.status==='stopping';
   $('device-type').disabled=busy;$('serial').disabled=busy;
   $('save-settings').disabled=busy;
@@ -84,7 +107,7 @@ function render(){
   $('last-failure').textContent=state.last_failure?`最近记录：${state.last_failure.reason||'执行未通过'}${failureTitle?' · '+failureTitle:''}`:'遇到验证、恢复失败或核验失败时记录现场，原始截图仅保存在本机。';
   $('package-name').textContent=state.package||'设备未连接';$('preview-source').textContent=state.source==='ocr'?'本地 OCR 识别':state.source==='ui'?'页面控件识别':'手机截图预览';
   if(!initialized){const c=state.config;for(const name of ['distance','duration','interval','burst'])for(const bound of ['min','max'])$('swipe-'+name+'-'+bound).value=Number((c['swipe_'+name+'_'+bound]*(name==='distance'?100:1)).toFixed(3));$('browse-seconds').value=c.default_browse_seconds;$('browse-extra').value=c.browse_extra_seconds;$('max-attempts').value=c.max_attempts;$('max-tasks').value=c.max_tasks;$('cross-app').checked=c.allow_cross_app;$('ocr').checked=c.ocr;$('scroll').checked=c.scroll_browse;$('claim').checked=c.claim_rewards;for(const k of ['browse','search','visit','claim'])$('kind-'+k).checked=(c.enabled_task_kinds||['browse','search','visit','claim']).includes(k);initialized=true;}
-  renderTasks();renderLogs();preview();
+  updateSettingsSummary();renderTasks();renderLogs();preview();
 }
 async function poll(){
   if(pollRequest)return pollRequest;
@@ -113,6 +136,10 @@ document.addEventListener('visibilitychange',()=>{clearTimeout(pollTimer);clearT
 window.addEventListener('pagehide',()=>{pageActive=false;clearTimeout(pollTimer);clearTimeout(previewTimer);});
 window.addEventListener('pageshow',event=>{if(event.persisted){pageActive=true;pollLoop();previewLoop();}});
 for(const id of ['connect','run','capture','stop'])$(id).addEventListener('click',()=>action(id));
+for(const button of document.querySelectorAll('[data-settings-toggle]'))button.addEventListener('click',()=>showSettings(settingsSection===button.dataset.settingsToggle?null:button.dataset.settingsToggle));
+$('toggle-instances').addEventListener('click',()=>{clonesEnabled=!clonesEnabled;if(!clonesEnabled){$('sequence-instances').checked=false;$('instance-options').hidden=true;queueOrder=defaultInstanceId()?[defaultInstanceId()]:[];renderInstanceOptions();const busy=state&&(busyStates.has(state.status)||state.busy);if(state?.connected&&!busy&&state.selected_instance!==defaultInstanceId())action('select_instance',{instance_id:defaultInstanceId()});}if(state)render();else $('instance-panel').hidden=!clonesEnabled;});
+$('settings-form').addEventListener('input',()=>{for(const name of ['distance','duration','interval','burst'])$('swipe-'+name+'-max').setCustomValidity('');updateSettingsSummary();});
+for(const input of document.querySelectorAll('input[name=mode]'))input.addEventListener('change',updateSettingsSummary);
 $('app-instance').addEventListener('change',()=>{if(!$('sequence-instances').checked){queueOrder=[$('app-instance').value];renderInstanceOptions();}action('select_instance',{instance_id:$('app-instance').value});});
 $('refresh-instances').addEventListener('click',()=>action('refresh_instances'));
 $('sequence-instances').addEventListener('change',()=>{$('instance-options').hidden=!$('sequence-instances').checked;if($('sequence-instances').checked){document.querySelector('input[name=mode][value=auto]').checked=true;}renderInstanceOptions();if(state)render();});

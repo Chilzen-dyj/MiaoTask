@@ -24,6 +24,7 @@ from modules.daily_state import DailyState, local_day
 from modules.app_instances import AppInstance, InstanceMismatch
 from modules.notifications import notify_security_attention
 from modules.runtime import data_dir, version
+from modules.branding import PUBLIC_ICON_FILES
 
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent.parent
@@ -541,6 +542,10 @@ def make_handler(controller, token):
                 except Exception:
                     logger.exception('导出当天诊断记录失败')
                     self.reply(500, {'error': '无法导出当天诊断记录，请检查本地数据目录是否可写'})
+            elif path == '/favicon.ico' or (path.startswith('/assets/') and path.removeprefix('/assets/') in PUBLIC_ICON_FILES):
+                name = 'miaotask.ico' if path == '/favicon.ico' else path.removeprefix('/assets/')
+                base = Path(getattr(sys, '_MEIPASS', ROOT)) / 'web/assets'
+                self.reply(200, (base / name).read_bytes(), 'image/x-icon' if name.endswith('.ico') else 'image/png')
             elif path in ('/', '/app.js', '/style.css'):
                 name = {'/': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css'}[path]
                 base = Path(getattr(sys, '_MEIPASS', ROOT)) / 'web'
