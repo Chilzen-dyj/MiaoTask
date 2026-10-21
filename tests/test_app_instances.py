@@ -101,6 +101,42 @@ class ScopedDeviceTests(unittest.TestCase):
         self.assertEqual(d.current_app.call_count, 2)
         d._device.app_start.assert_not_called()
 
+    def test_cold_start_reactivates_same_instance_once_after_old_task_falls_back(self):
+        d = self.phone()
+        starts = []
+        def shell(args):
+            if 'resolve-activity' in args:
+                return result('com.taobao.taobao/.Welcome')
+            if args[:2] == ['am', 'start']:
+                starts.append(args)
+            return result('Starting')
+        d._device.shell.side_effect = shell
+        d.current_app = Mock(side_effect=lambda: dict(package=CLONE.package, user_id=999) if len(starts) == 2 else dict(package='com.example.previous', user_id=0))
+        clock = [0.0]
+        with patch('modules.device_adapter.time.monotonic', side_effect=lambda: clock[0]), patch('modules.device_adapter.time.sleep', side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
+            d.restart_app(CLONE.package)
+        self.assertEqual(len(starts), 2)
+        self.assertTrue(all(args[2:4] == ['--user', '999'] for args in starts))
+        stops = [c.args[0] for c in d._device.shell.call_args_list if c.args[0][:2] == ['am', 'force-stop']]
+        self.assertEqual(stops, [['am', 'force-stop', '--user', '999', CLONE.package]])
+        self.assertEqual(d.selected_instance, CLONE)
+
+    def test_reactivation_never_accepts_unknown_or_other_user_identity(self):
+        for user in (0, None):
+            d = self.phone()
+            d._device.shell.return_value = result('com.taobao.taobao/.Welcome')
+            d.current_app = Mock(return_value=dict(package=CLONE.package, user_id=user))
+            clock = [0.0]
+            with patch('modules.device_adapter.time.monotonic', side_effect=lambda: clock[0]), patch('modules.device_adapter.time.sleep', side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
+                with self.assertRaises(InstanceMismatch):
+                    d.resume_app(CLONE.package)
+            starts = [c.args[0] for c in d._device.shell.call_args_list if c.args[0][:2] == ['am', 'start']]
+            self.assertEqual(len(starts), 2)
+            self.assertTrue(all(args[2:4] == ['--user', '999'] for args in starts))
+            d._device.click.assert_not_called()
+            d._device.press.assert_not_called()
+            self.assertEqual(d.selected_instance, CLONE)
+
     def test_other_or_unknown_same_package_user_gets_no_click_swipe_back_or_text(self):
         for user in (0, None):
             for method, args in [('click', (100, 200)), ('swipe', (100, 400, 100, 200)),

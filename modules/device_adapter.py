@@ -328,20 +328,26 @@ class DeviceAdapter:
             component = output.strip().splitlines()[-1] if output.strip() else ''
         if not re.fullmatch(re.escape(package) + r'/[\w.$]+', component):
             raise RuntimeError('无法找到所选淘宝实例的启动入口，请刷新实例列表')
-        self._checked_shell(['am', 'start', '--user', str(target.user_id), '-a', 'android.intent.action.MAIN',
-                             '-c', 'android.intent.category.LAUNCHER', '-n', component])
-        # A task switch is asynchronous. Never allow the old same-package user
-        # to be accepted as the newly launched instance.
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            try:
-                info = self.current_app()
-            except Exception:
-                logger.debug('启动转场中暂未取得前台实例', exc_info=True)
-                info = {}
-            if (info.get('package'), info.get('user_id')) == (target.package, target.user_id):
-                return
-            time.sleep(.15)
+        start = ['am', 'start', '--user', str(target.user_id), '-a', 'android.intent.action.MAIN',
+                 '-c', 'android.intent.category.LAUNCHER', '-n', component]
+        # A cold-started task can finish its old activity and expose the previous
+        # app again. Reactivate the SAME selected instance once, without another
+        # force-stop or any input into an unconfirmed account.
+        for attempt in range(2):
+            self._checked_shell(start)
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                try:
+                    info = self.current_app()
+                except Exception:
+                    logger.debug('启动转场中暂未取得前台实例', exc_info=True)
+                    info = {}
+                if (info.get('package'), info.get('user_id')) == (target.package, target.user_id):
+                    return
+                time.sleep(.15)
+            if attempt == 0:
+                self._screenshot_cache = None
+                logger.info('启动后未确认所选淘宝前台，重新唤起同一实例后核对')
         raise InstanceMismatch('未确认所选淘宝实例已进入前台，已停止，未改用其他淘宝')
 
     @serialized

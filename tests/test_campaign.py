@@ -9,6 +9,7 @@ from urllib.request import Request, urlopen
 from modules.campaign import CampaignRunner, NeedsAttention, RunControl, Stopped, TaskUnavailable, load_config, validate_config
 from modules.control_panel import Controller, LocalHTTPServer, make_handler, serve
 from modules.device_adapter import DeviceAdapter
+from modules.app_instances import AppInstance, InstanceMismatch
 from modules.screen_reader import Screen, ScreenReader
 from modules.task_model import TextNode, is_task_list, normalize, parse_tasks
 
@@ -230,6 +231,8 @@ class RunnerTests(unittest.TestCase):
         state = {'screen': external}
         r.read = Mock(side_effect=lambda **kwargs: state['screen'])
         r.device.resume_app.side_effect = lambda package: state.update(screen=stuck)
+        desktop = Screen([], 1440, 3200, 'com.miui.home')
+        r.device.go_back.side_effect = lambda: state.update(screen=stuck if state['screen'] is external else desktop)
         r.device.restart_app.side_effect = lambda package: state.update(screen=home)
 
         def click(x, y):
@@ -251,7 +254,8 @@ class RunnerTests(unittest.TestCase):
     def test_recovery_cold_restarts_after_multilevel_external_jump(self):
         r, panel = self.navigation_scenario()
         self.assertIs(r.recover(), panel)
-        r.device.resume_app.assert_called_once_with(r.origin)
+        r.device.resume_app.assert_not_called()
+        self.assertEqual(r.device.go_back.call_count, 2)
         r.device.restart_app.assert_called_once_with(r.origin)
         self.assertEqual(r.device.click.call_count, 2)
         self.assertLess(r.control.now(), 30)
@@ -424,16 +428,19 @@ class RunnerTests(unittest.TestCase):
         r.config['page_timeout'] = 3
         activity = Screen([node('淘金币双11狂享20亿', 60, 160),
                            node('去赚能量', 1150, 1150, 280, 180)], 1440, 3200, r.origin)
-        r.read = Mock(return_value=activity)
+        desktop = Screen([], 1440, 3200, 'com.miui.home')
+        state = {'screen': activity}
+        r.read = Mock(side_effect=lambda **kwargs: state['screen'])
+        r.device.go_home.side_effect = lambda: state.update(screen=desktop)
         r.on_failure = Mock()
         before_restart = []
-        r.device.restart_app.side_effect = lambda package: before_restart.append(r.device.click.call_count)
+        r.device.restart_app.side_effect = lambda package: (before_restart.append(r.device.click.call_count), state.update(screen=activity))
         with self.assertRaises(NeedsAttention):
             r._navigate_list(activity, allow_restart=True)
         self.assertEqual(len(before_restart), 1)
         self.assertGreaterEqual(before_restart[0], 5)
         self.assertLessEqual(r.device.click.call_count, 12)
-        self.assertLess(r.control.now(), 15)
+        self.assertLess(r.control.now(), 25)
         r.on_failure.assert_called_once()
 
     def test_security_during_second_page_pass_prevents_restart_and_more_taps(self):
@@ -499,13 +506,18 @@ class RunnerTests(unittest.TestCase):
         r.config['page_timeout'] = 3
         r.on_failure = Mock()
         activity = Screen([node('赚能量', 1150, 1200, 220)], 1440, 3200, r.origin)
-        r.read = Mock(return_value=activity)
+        desktop = Screen([], 1440, 3200, 'com.miui.home')
+        state = {'screen': activity}
+        r.read = Mock(side_effect=lambda **kwargs: state['screen'])
+        r.device.go_home.side_effect = lambda: state.update(screen=desktop)
+        r.device.restart_app.side_effect = lambda package: state.update(screen=activity)
         with self.assertRaises(NeedsAttention) as raised:
             r._navigate_list(activity, allow_restart=True)
         self.assertTrue(raised.exception.evidence_saved)
         self.assertEqual(r.device.click.call_count, 6)
-        self.assertLess(r.control.now(), 8)
-        r.device.go_back.assert_not_called()
+        self.assertLess(r.control.now(), 25)
+        self.assertGreater(r.device.go_back.call_count, 0)
+        self.assertLessEqual(r.device.go_back.call_count, r.config['max_back_steps'] * 2)
         r.device.restart_app.assert_called_once_with(r.origin)
         r.on_failure.assert_called_once()
         self.assertEqual(r.on_failure.call_args.kwargs['reason'], str(raised.exception))
@@ -569,7 +581,7 @@ class RunnerTests(unittest.TestCase):
         self.assertIs(r.enter_task_panel(loading), panel)
         r.device.click.assert_not_called()
 
-    def test_task_exception_cold_reopens_and_verifies_settled_progress(self):
+    def test_task_exception_accepts_already_restored_list_and_settled_progress(self):
         r = self.clock_runner()
         r.config['max_tasks'] = 1
         before, after = task_screen(), task_screen(1)
@@ -578,7 +590,7 @@ class RunnerTests(unittest.TestCase):
         r.read = Mock(return_value=after)
         with self.assertLogs('modules.campaign', level='ERROR'):
             result = r.run(auto_open=True)
-        r.device.restart_app.assert_called_once_with(r.origin)
+        r.device.restart_app.assert_not_called()
         self.assertEqual(result['attempts'], 1)
         self.assertEqual(result['completed'], 1)
         self.assertEqual(result['failed'], 0)
@@ -586,7 +598,7 @@ class RunnerTests(unittest.TestCase):
     def test_cold_recovery_is_shared_across_calls_for_same_task(self):
         r = self.clock_runner()
         panel = task_screen()
-        r.read = Mock(return_value=panel)
+        r.read = Mock(side_effect=[OSError('temporary capture failure'), Screen([], 1440, 3200, 'com.miui.home'), panel, panel])
         self.assertIs(r.recover(cold_start=True), panel)
         self.assertIs(r.recover(cold_start=True), panel)
         r.device.restart_app.assert_called_once_with(r.origin)
@@ -594,7 +606,7 @@ class RunnerTests(unittest.TestCase):
     def test_cold_recovery_handles_initial_observation_rpc_failure(self):
         r = self.clock_runner()
         panel = task_screen()
-        r.read = Mock(side_effect=[OSError('temporary capture failure'), panel])
+        r.read = Mock(side_effect=[OSError('temporary capture failure'), Screen([], 1440, 3200, 'com.miui.home'), panel])
         self.assertIs(r.recover(cold_start=True), panel)
         r.device.restart_app.assert_called_once_with(r.origin)
 
@@ -619,7 +631,7 @@ class RunnerTests(unittest.TestCase):
             r.run(auto_open=True)
         r.device.restart_app.assert_called_once_with(r.origin)
 
-    def test_scanning_exception_cold_reopens_without_resetting_task_statistics(self):
+    def test_scanning_exception_reuses_visible_list_without_resetting_statistics(self):
         r = self.clock_runner()
         r.config['enabled_task_kinds'] = ['search']
         panel = task_screen()
@@ -628,19 +640,183 @@ class RunnerTests(unittest.TestCase):
         r.device.swipe.side_effect = OSError('temporary swipe failure')
         with self.assertLogs('modules.campaign', level='ERROR'):
             result = r.run(auto_open=True)
-        r.device.restart_app.assert_called_once_with(r.origin)
+        r.device.restart_app.assert_not_called()
         self.assertEqual(result['attempts'], 0)
         self.assertEqual(result['completed'], 0)
 
     def test_unrecoverable_auto_entry_is_bounded_and_does_not_relaunch_forever(self):
         r = self.clock_runner()
         r.config.update(page_timeout=3, return_timeout=5, max_back_steps=2)
-        r.read = Mock(return_value=Screen([node('商品详情', 40, 400)], 1440, 3200, r.origin))
+        stuck = Screen([node('商品详情', 40, 400)], 1440, 3200, r.origin)
+        state = {'screen': stuck}
+        r.read = Mock(side_effect=lambda **kwargs: state['screen'])
+        r.device.go_home.side_effect = lambda: state.update(screen=Screen([], 1440, 3200, 'com.miui.home'))
+        r.device.restart_app.side_effect = lambda package: state.update(screen=stuck)
         with self.assertRaises(NeedsAttention):
             r.ensure_list(auto_open=True)
         r.device.restart_app.assert_called_once_with(r.origin)
         self.assertLessEqual(r.device.go_back.call_count, 8)
         self.assertLess(r.control.now(), 30)
+
+    def test_search_keyboard_and_multiple_pages_return_without_restart(self):
+        r = self.clock_runner()
+        results = self.results_page()
+        detail = Screen([node('商品详情', 60, 600)], 1440, 3200, r.origin)
+        activity = Screen([node('去赚能量', 1150, 1200)], 1440, 3200, r.origin)
+        panel = task_screen(1)
+        state = {'screen': results, 'backs': 0}
+        def back():
+            state['backs'] += 1
+            # The first Back only hides the keyboard; the visible result text
+            # does not change, and must not be mistaken for a navigation failure.
+            state['screen'] = [results, detail, activity][min(state['backs'] - 1, 2)]
+        r.device.go_back.side_effect = back
+        r.device.click.side_effect = lambda *args: state.update(screen=panel)
+        r.read = Mock(side_effect=lambda **kwargs: state['screen'])
+        self.assertIs(r.recover(), panel)
+        self.assertEqual(r.device.go_back.call_count, 3)
+        r.device.go_home.assert_not_called()
+        r.device.restart_app.assert_not_called()
+        r.device.resume_app.assert_not_called()
+
+    def test_external_chain_uses_more_than_two_backs_before_resuming(self):
+        r = self.clock_runner()
+        external = Screen([node('应用内页面', 60, 600)], 1440, 3200, 'com.example.browser')
+        panel = task_screen(1)
+        state = {'screen': external}
+        r.device.go_back.side_effect = lambda: state.update(screen=panel if r.device.go_back.call_count == 3 else external)
+        r.read = Mock(side_effect=lambda **kwargs: state['screen'])
+        self.assertIs(r.recover(), panel)
+        self.assertEqual(r.device.go_back.call_count, 3)
+        r.device.restart_app.assert_not_called()
+        r.device.resume_app.assert_not_called()
+
+    def test_startup_popup_is_dismissed_by_back_before_activity_navigation(self):
+        r = self.clock_runner()
+        popup = Screen([node('今日推荐活动弹窗', 50, 600)], 1440, 3200, r.origin)
+        home = Screen([node('领淘金币', 120, 500)], 1440, 3200, r.origin)
+        activity = Screen([node('赚能量', 1150, 1200)], 1440, 3200, r.origin)
+        panel = task_screen()
+        state = {'screen': popup}
+        r.device.go_back.side_effect = lambda: state.update(screen=home)
+        r.device.click.side_effect = lambda *args: state.update(screen=activity if state['screen'] is home else panel)
+        r.read = Mock(side_effect=lambda **kwargs: state['screen'])
+        self.assertIs(r.ensure_list(auto_open=True), panel)
+        r.device.go_back.assert_called_once()
+        r.device.restart_app.assert_not_called()
+
+    def test_startup_popup_reaches_desktop_then_one_recovery_launch(self):
+        r = self.clock_runner()
+        desktop = Screen([], 1440, 3200, 'com.miui.home')
+        popup = Screen([node('启动活动弹窗', 50, 600)], 1440, 3200, r.origin)
+        home = Screen([node('领淘金币', 120, 500)], 1440, 3200, r.origin)
+        activity = Screen([node('赚能量', 1150, 1200)], 1440, 3200, r.origin)
+        panel = task_screen()
+        state = {'screen': desktop}
+        r.device.current_app.return_value = {'package': desktop.package}
+        def restart(package):
+            self.assertIs(state['screen'], desktop)
+            state['screen'] = popup if r.device.restart_app.call_count == 1 else home
+        r.device.restart_app.side_effect = restart
+        r.device.go_back.side_effect = lambda: state.update(screen=desktop)
+        r.device.click.side_effect = lambda *args: state.update(screen=activity if state['screen'] is home else panel)
+        r.read = Mock(side_effect=lambda **kwargs: state['screen'])
+        self.assertIs(r.ensure_list(auto_open=True), panel)
+        self.assertEqual(r.device.restart_app.call_count, 2)  # initial launch + one recovery
+        r.device.go_back.assert_called_once()
+
+    def test_home_overlay_back_precedes_covered_native_entry(self):
+        r = self.clock_runner()
+        home_nodes = [node('我的淘宝', 1150, 3000), node('购物车', 850, 3000),
+                      node('领淘金币', 120, 500), node('搜索栏', 100, 150)]
+        popup = Screen([*home_nodes, node('关闭按钮', 650, 2400)], 1440, 3200, r.origin)
+        home = Screen(home_nodes, 1440, 3200, r.origin)
+        activity = Screen([node('赚能量', 1150, 1200)], 1440, 3200, r.origin)
+        panel = task_screen()
+        state = {'screen': popup}
+        r.device.go_back.side_effect = lambda: state.update(screen=home)
+        def click(*args):
+            self.assertIsNot(state['screen'], popup)
+            state['screen'] = activity if state['screen'] is home else panel
+        r.device.click.side_effect = click
+        r.read = Mock(side_effect=lambda **kwargs: state['screen'])
+        self.assertIs(r.ensure_list(auto_open=True), panel)
+        r.device.go_back.assert_called_once()
+        r.device.restart_app.assert_not_called()
+
+    def test_back_limit_confirms_desktop_before_single_cold_recovery(self):
+        r = self.clock_runner()
+        page = Screen([node('无响应的商品页', 50, 600)], 1440, 3200, r.origin)
+        desktop = Screen([], 1440, 3200, 'com.miui.home')
+        panel = task_screen()
+        state = {'screen': page}
+        r.device.go_home.side_effect = lambda: state.update(screen=desktop)
+        def restart(package):
+            self.assertIs(state['screen'], desktop)
+            state['screen'] = panel
+        r.device.restart_app.side_effect = restart
+        r.read = Mock(side_effect=lambda **kwargs: state['screen'])
+        self.assertIs(r.recover(), panel)
+        self.assertEqual(r.device.go_back.call_count, r.config['max_back_steps'])
+        r.device.go_home.assert_called_once()
+        r.device.restart_app.assert_called_once_with(r.origin)
+
+    def test_unconfirmed_desktop_does_not_allow_cold_restart(self):
+        r = self.clock_runner()
+        page = Screen([node('仍未退出的页面', 50, 600)], 1440, 3200, r.origin)
+        r.read = Mock(return_value=page)
+        with self.assertRaises(NeedsAttention):
+            r.recover()
+        self.assertEqual(r.device.go_back.call_count, r.config['max_back_steps'])
+        r.device.go_home.assert_called_once()
+        r.device.restart_app.assert_not_called()
+
+    def test_verification_appearing_during_backtracking_stops_immediately(self):
+        r = self.clock_runner()
+        page = Screen([node('商品页', 50, 600)], 1440, 3200, r.origin)
+        challenge = Screen([node('安全验证', 50, 600)], 1440, 3200, r.origin)
+        r.read = Mock(side_effect=[page, challenge])
+        with self.assertRaises(NeedsAttention) as raised:
+            r.recover()
+        self.assertEqual(raised.exception.kind, 'security')
+        r.device.go_back.assert_called_once()
+        r.device.go_home.assert_not_called()
+        r.device.restart_app.assert_not_called()
+
+    def test_stopped_backtracking_sends_no_further_input(self):
+        r = self.clock_runner()
+        page = Screen([node('商品页', 50, 600)], 1440, 3200, r.origin)
+        r.read = Mock(return_value=page)
+        r.device.go_back.side_effect = r.control.stopped.set
+        with self.assertRaises(Stopped):
+            r.recover()
+        r.device.go_back.assert_called_once()
+        r.device.go_home.assert_not_called()
+        r.device.restart_app.assert_not_called()
+
+    def test_rpc_retry_observes_verification_before_sending_any_input(self):
+        r = self.clock_runner()
+        challenge = Screen([node('安全验证', 50, 600)], 1440, 3200, r.origin)
+        r.read = Mock(side_effect=[OSError('temporary capture failure'), challenge])
+        with self.assertRaises(NeedsAttention) as raised:
+            r.recover(cold_start=True)
+        self.assertEqual(raised.exception.kind, 'security')
+        r.device.go_back.assert_not_called()
+        r.device.go_home.assert_not_called()
+        r.device.restart_app.assert_not_called()
+
+    def test_other_taobao_user_during_backtracking_gets_no_further_input(self):
+        r = self.clock_runner()
+        r.target_instance = AppInstance(r.origin, 999, 'selected clone')
+        external = Screen([node('第三方页面', 50, 600)], 1440, 3200, 'com.example.browser')
+        wrong = task_screen()
+        wrong.user_id = 0
+        r.read = Mock(side_effect=[external, wrong])
+        with self.assertRaises(InstanceMismatch):
+            r.recover()
+        r.device.go_back.assert_called_once()
+        r.device.go_home.assert_not_called()
+        r.device.restart_app.assert_not_called()
 
     def clock_runner(self):
         r = self.runner()
@@ -674,6 +850,39 @@ class RunnerTests(unittest.TestCase):
         self.assertTrue(CampaignRunner.search_results_ready(screen))
         screen.nodes = screen.nodes[:3] + [node('历史搜索', 30, 600), node('搜索发现', 30, 1100)]
         self.assertFalse(CampaignRunner.search_results_ready(screen))
+
+    def test_home_search_waits_for_editable_field_after_overlay_consumes_tap(self):
+        r = self.clock_runner()
+        home = Screen([node('搜索栏', 100, 150)], 1440, 3200, r.origin)
+        r.read = Mock(return_value=home)
+        self.assertFalse(r.open_home_search(home))
+        r.device.input_text.assert_not_called()
+        r.device.press.assert_not_called()
+        r.device.click.assert_called_once()
+        self.assertLess(r.control.now(), r.config['page_timeout'] + 1)
+
+    def test_home_search_waits_for_delayed_edit_then_accepts_official_card(self):
+        r = self.clock_runner()
+        home = Screen([node('搜索栏', 100, 150)], 1440, 3200, r.origin)
+        edit, tree = self.search_page()
+        edit.tree = tree
+        official = Screen([node('淘金币', 125, 161, 100, 40),
+                           node('双11狂享20亿', 125, 220, 400, 40),
+                           node('进入', 1200, 210, 100, 40)], 1440, 3200, r.origin)
+        r.read = Mock(side_effect=[home, edit, official])
+        r.device.dump_hierarchy.return_value = tree
+        self.assertTrue(r.open_home_search(home))
+        r.device.input_text.assert_called_once_with(r.config['search_keyword'])
+        self.assertEqual(r.device.click.call_count, 2)
+
+    def test_home_search_guard_stops_before_typing_on_verification(self):
+        r = self.clock_runner()
+        home = Screen([node('搜索栏', 100, 150)], 1440, 3200, r.origin)
+        r.read = Mock(return_value=Screen([node('请完成安全验证', 100, 500)], 1440, 3200, r.origin))
+        with self.assertRaises(NeedsAttention):
+            r.open_home_search(home)
+        r.device.input_text.assert_not_called()
+        r.device.press.assert_not_called()
 
     def test_search_types_then_clicks_button_not_identical_edit_label(self):
         r = self.clock_runner()
