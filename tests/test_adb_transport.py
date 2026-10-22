@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from modules import adb_transport as transport
+from backend.core.device import discovery as transport
 
 
 class AdbTransportTests(unittest.TestCase):
@@ -151,8 +151,8 @@ class AdbTransportTests(unittest.TestCase):
 
     def test_frozen_helper_uses_the_same_bundled_executable_as_main(self):
         with tempfile.TemporaryDirectory() as folder:
-            tools = Path(folder) / 'tools'
-            tools.mkdir()
+            tools = Path(folder) / 'shared' / 'tools'
+            tools.mkdir(parents=True)
             executable = tools / 'adb.exe'
             executable.write_bytes(b'test-executable')
             with patch.dict(os.environ, {'ADBUTILS_ADB_PATH': ''}), patch.object(
@@ -165,12 +165,12 @@ class AdbTransportTests(unittest.TestCase):
 
 class PanelDiscoveryTests(unittest.TestCase):
     def test_panel_uses_shared_android_helper_and_keeps_unauthorized_selectable(self):
-        from modules.control_panel import discover_devices
+        from backend.core.service.panel import discover_devices
         devices = [dict(serial='phone-a', state='unauthorized', model='Phone_A', description='usb:1-1'),
                    dict(serial='phone-b', state='recovery', model='', description='usb:1-2')]
         with patch.object(transport, 'list_android_devices', return_value=devices) as listing, patch(
-                'modules.control_panel.shutil.which', return_value=None), patch(
-                'modules.control_panel.subprocess.run') as run:
+                'backend.core.service.panel.shutil.which', return_value=None), patch(
+                'backend.core.service.panel.subprocess.run') as run:
             discovered = discover_devices()
         listing.assert_called_once_with()
         run.assert_not_called()
@@ -179,10 +179,10 @@ class PanelDiscoveryTests(unittest.TestCase):
             dict(serial='phone-b', type='uiautomator2', status='recovery', model='')])
 
     def test_android_discovery_failure_preserves_harmony_detection(self):
-        from modules.control_panel import discover_devices
+        from backend.core.service.panel import discover_devices
         with patch.object(transport, 'list_android_devices', side_effect=transport.AndroidConnectionError('未找到 ADB')), patch(
-                'modules.control_panel.shutil.which', return_value='chosen-hdc'), patch(
-                'modules.control_panel.subprocess.run', return_value=subprocess.CompletedProcess([], 0, 'harmony-a\n', '')) as run:
+                'backend.core.service.panel.shutil.which', return_value='chosen-hdc'), patch(
+                'backend.core.service.panel.subprocess.run', return_value=subprocess.CompletedProcess([], 0, 'harmony-a\n', '')) as run:
             discovered = discover_devices()
         self.assertEqual(discovered['devices'], [
             dict(serial='harmony-a', type='hmdriver2', status='device', model='HarmonyOS')])

@@ -3,9 +3,9 @@ import threading
 import unittest
 from unittest.mock import Mock
 
-from modules.browse_gestures import BrowseGestures
-from modules.campaign import load_config, validate_config
-from modules.windows_tray import WindowsTray
+from backend.core.execution.gestures import BrowseGestures
+from backend.app.taobao.activities.double11.activity import load_config, validate_config
+from backend.core.service.tray import WindowsTray
 
 
 class GestureTests(unittest.TestCase):

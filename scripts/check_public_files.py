@@ -7,22 +7,24 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
 ROOT_FILES = {
-    '.gitignore', '.gitattributes', 'README.md', 'main.py', 'build.spec', 'start.bat',
-    'requirements.txt', 'requirements-build.txt', 'requirements-windows.lock', 'version.json',
+    '.gitignore', '.gitattributes', 'README.md', 'AGENTS.md', 'LICENSE', 'NOTICE', 'main.py', 'build.spec', 'start.bat',
+    'build/README.md', 'requirements.txt', 'requirements-build.txt', 'requirements-windows.lock', 'version.json',
 }
-SOURCE_DIRS = {'.github', 'configs', 'docs', 'modules', 'scripts', 'tests', 'web'}
+SOURCE_DIRS = {'.github', 'configs', 'docs', 'modules', 'scripts', 'tests', 'web', 'frontend', 'backend', 'shared'}
 PRIVATE_PARTS = {'runtime', 'private', 'screenshots', 'captures', 'reports', 'backups',
                  '.venv', 'venv', 'env', 'build', 'dist', '__pycache__', '.ruff_cache', '.idea', '.vscode'}
 SOURCE_SUFFIXES = {'.py', '.md', '.json', '.yml', '.yaml', '.html', '.css', '.js', '.txt', '.lock'}
 # Individually reviewed documentation graphics only. Never allow arbitrary captures.
 PUBLIC_IMAGES = {
-    'docs/assets/console-desktop.webp': 'webp',
-    'docs/assets/console-v9.png': 'png',
-    'docs/assets/results-desktop.webp': 'webp',
+    'docs/assets/miaotask-overview.webp': 'webp',
+    'docs/assets/feature-wifi.webp': 'webp',
+    'docs/assets/feature-devices.webp': 'webp',
+    'docs/assets/feature-queue.webp': 'webp',
+    'docs/assets/feature-scroll.webp': 'webp',
 }
-PUBLIC_IMAGES.update({f'web/assets/miaotask-{size}.png': 'png'
+PUBLIC_IMAGES.update({f'frontend/assets/miaotask-{size}.png': 'png'
                       for size in (16, 20, 24, 32, 40, 48, 64, 128, 180, 256, 512, 1024)})
-PUBLIC_IMAGES.update({'web/assets/miaotask-master.png': 'png', 'web/assets/miaotask.ico': 'ico'})
+PUBLIC_IMAGES.update({'frontend/assets/miaotask-master.png': 'png', 'frontend/assets/miaotask.ico': 'ico'})
 SECRET_PATTERNS = (
     re.compile(rb'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'),
     re.compile(rb'\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{50,})\b'),
@@ -37,7 +39,7 @@ def audit_file(name, content, forbidden=()):
     problems = []
     if path.is_absolute() or '..' in path.parts or ':' in name or '\\' in name:
         problems.append('unsafe path')
-    if any(part in PRIVATE_PARTS for part in path.parts):
+    if name != 'build/README.md' and any(part in PRIVATE_PARTS for part in path.parts):
         problems.append('local/private directory')
     image_type = PUBLIC_IMAGES.get(name)
     if not image_type and name not in ROOT_FILES and (not path.parts or path.parts[0] not in SOURCE_DIRS

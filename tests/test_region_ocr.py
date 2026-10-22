@@ -3,9 +3,9 @@ from unittest.mock import Mock
 
 from PIL import Image
 
-from modules.campaign import CampaignRunner, NeedsAttention
-from modules.screen_reader import Screen, ScreenReader
-from modules.task_model import TextNode
+from backend.app.taobao.activities.double11.activity import CampaignRunner, NeedsAttention
+from backend.core.device.screen import Screen, ScreenReader
+from backend.app.taobao.activities.double11.tasks import TextNode
 
 
 class RegionOCRTests(unittest.TestCase):

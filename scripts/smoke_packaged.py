@@ -48,6 +48,11 @@ def smoke(executable, output=None):
                         raise RuntimeError(f'Unexpected packaged response: {name}')
             with urlopen(base + '/api/state', timeout=5) as response:
                 state = json.load(response)
+            with urlopen(base + '/api/apps', timeout=5) as response:
+                catalog = json.load(response)['apps']
+            if state.get('catalog') != catalog:
+                raise RuntimeError('Panel catalog does not match the registry API')
+            result['activity_catalog'] = True
             for asset in ('/assets/miaotask-32.png', '/assets/miaotask-128.png', '/favicon.ico'):
                 with urlopen(base + asset, timeout=5) as response:
                     expected = b'\x00\x00\x01\x00' if asset.endswith('.ico') else b'\x89PNG\r\n\x1a\n'
@@ -64,6 +69,26 @@ def smoke(executable, output=None):
                 'Origin': base, 'Sec-Fetch-Site': 'same-origin'})
             with urlopen(request, timeout=5) as response:
                 result['browser_headers_post'] = response.status == 202
+            def post(path, payload):
+                request = Request(base+path, data=json.dumps(payload).encode(), headers={
+                    'Content-Type':'application/json','X-Miao-Token':state['token'],
+                    'Origin':base,'Sec-Fetch-Site':'same-origin'})
+                with urlopen(request,timeout=5) as response:
+                    return json.load(response)
+            added=post('/api/workspaces',{'label':'offline check'})['id']
+            post('/api/configure?device='+added,{'config':{'max_tasks':3}})
+            with urlopen(base+'/api/state?device='+added,timeout=5) as response:
+                child=json.load(response)
+            with urlopen(base+'/api/state',timeout=5) as response:
+                original=json.load(response)
+            if child['config']['max_tasks']!=3 or original['config']['max_tasks']!=state['config']['max_tasks']:
+                raise RuntimeError('Packaged workspaces do not isolate configuration')
+            post('/api/workspaces/remove',{'id':added})
+            for path in ['/js/components/device-manager.js','/js/components/wifi-connect.js']:
+                with urlopen(base+path,timeout=5) as response:
+                    if not response.read():
+                        raise RuntimeError('Packaged frontend component missing: '+path)
+            result['multi_device_isolation']=True
             # Launching twice should reuse the existing service.
             port = base.rsplit(':', 1)[1]
             subprocess.run([str(executable), '--no-browser', '--port', port], cwd=work, env=env,

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light"><title>MiaoTask · 设备任务工作台</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/miaotask-32.png"><link rel="icon" type="image/png" sizes="16x16" href="/assets/miaotask-16.png"><link rel="apple-touch-icon" sizes="180x180" href="/assets/miaotask-180.png">
+  <link rel="stylesheet" href="/css/base.css"><script src="/js/api.js" defer></script><script src="/js/components/activity-selector.js" defer></script><script src="/js/components/wifi-connect.js" defer></script><script src="/js/components/device-manager.js" defer></script><script src="/js/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/" aria-label="MiaoTask 首页"><span class="brand-icon"><img src="/assets/miaotask-64.png" srcset="/assets/miaotask-128.png 2x" width="40" height="40" alt=""></span><span class="brand-name">MiaoTask</span><span class="brand-edition">任务助手</span></a><div class="top-meta"><span class="local-dot"></span> 本地运行<span class="divider"></span><span>MULTI-DEVICE / LOCAL</span><a href="/api/report" download title="下载当前任务和日志">导出记录 ↗</a></div></header>
+  <main>
+    <div class="page-heading"><div><div class="eyebrow">你的手机任务工作台</div><h1>把重复浏览，交给助手<span>。</span></h1><p>连接手机，一键识别并执行。每次返回，重新核验。</p></div><div class="status-pill" id="connection-label"><span></span>等待连接</div></div>
+    <section class="card device-manager" aria-label="多设备管理">
+      <div class="device-toolbar"><h2>设备工作区</h2><button type="button" class="button" id="add-device">＋ 添加设备</button><button type="button" class="text-button" id="remove-device">移除当前设备</button></div>
+      <div id="device-tabs" role="tablist" aria-label="切换设备"></div>
+      <div class="device-batch"><span>勾选设备后：</span><button type="button" class="feature-button" id="batch-run">应用当前设置并启动</button><button type="button" class="text-button" id="batch-open-app">唤醒所选应用</button><button type="button" class="text-button" id="batch-stop">停止所选设备</button><span id="batch-result" role="status"></span></div>
+      <section id="add-device-panel" hidden aria-label="添加设备">
+        <p class="field-hint">每台设备独立执行、暂停和保存记录。添加后可连接 USB、模拟器，或使用下方 Wi-Fi 向导配对。</p>
+        <div class="connection-grid"><label>设备名称<input id="new-device-name" maxlength="60" placeholder="例如：平板、横屏模拟器"></label><label>选择已发现设备<select id="new-device-address"><option value="">先添加，稍后连接</option></select></label><button type="button" class="button dark" id="confirm-add-device">添加</button></div>
+        <button type="button" class="text-button" id="refresh-device-list">↻ 检测已连接设备</button><button type="button" class="text-button" id="find-emulators">查找 MuMu 模拟器</button><p id="add-device-message" class="field-hint" role="status"></p>
+      </section>
+    </section>
+    <div class="workspace">
+      <section class="main-column">
+        <section class="card setup-card" aria-labelledby="setup-title"><div class="section-heading"><h2 id="setup-title"><span class="step">01</span>设备与活动</h2><button class="text-button" id="discover">↻ 检测设备</button></div>
+          <details class="activity-manager" style="margin:16px 0"><summary>应用与活动</summary><div class="device-grid" style="margin-top:12px"><label>应用<select id="activity-app" aria-label="应用"></select></label><label>活动<select id="activity-choice" aria-label="活动"></select></label><button type="button" class="button" id="activity-apply">选择活动</button></div></details><form id="settings-form"><div class="connection-grid"><label>设备平台<select id="device-type"><option value="uiautomator2">Android · 安卓</option><option value="hmdriver2">HarmonyOS · 鸿蒙</option></select></label><label class="device-field">设备 / 无线调试地址<input id="serial" placeholder="自动选择已连接手机" list="device-options" maxlength="128"><datalist id="device-options"></datalist></label><button type="button" class="button dark" id="connect">连接设备 <span>↗</span></button></div>
+          <p class="field-hint" id="device-hint">请保持手机解锁，并开启 USB 调试。</p>
+          <details class="wifi-manager" id="wifi-manager">
+            <summary>通过 Wi-Fi 连接手机<span>无需数据线 · Android 11 及以上</span></summary>
+            <p class="field-hint">手机和电脑连接同一 Wi-Fi。在手机「设置 → 开发者选项 → 无线调试」中开启无线调试，并允许当前网络。不同系统的设置位置可能不同。</p>
+            <div class="settings-buttons" aria-label="无线连接方式">
+              <button type="button" class="feature-button is-open" id="wifi-first" aria-pressed="true">首次配对</button>
+              <button type="button" class="feature-button" id="wifi-known" aria-pressed="false">已经配对</button>
+              <button type="button" class="text-button" id="wifi-discover">↻ 查找无线设备</button>
+            </div>
+            <section id="wifi-pair-panel" aria-label="首次无线配对">
+              <h3>1. 配对这台电脑</h3>
+              <p class="field-hint">在手机点击「使用配对码配对设备」，按弹窗填写下方两项。点击配对后请保持弹窗打开，旧配对码失效时重新填写。</p>
+              <div class="connection-grid">
+                <label>弹窗里的 IP 地址和端口<input id="wifi-pair-address" placeholder="例如 192.168.1.8:37123" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="128" list="wifi-pair-options"><datalist id="wifi-pair-options"></datalist></label>
+                <label>六位 Wi-Fi 配对码<input id="wifi-code" type="password" inputmode="numeric" placeholder="手机配对弹窗显示的 6 位数字" maxlength="6" autocomplete="off"></label>
+                <button type="button" class="button" id="wifi-pair">配对手机</button>
+              </div>
+              <p class="field-hint">配对码仅用于本次配对，不写入日志或设置。</p>
+            </section>
+            <section aria-label="连接已配对手机">
+              <h3 id="wifi-connect-title">2. 连接手机</h3>
+              <p class="field-hint">配对成功后关闭手机配对弹窗，IP 会沿用刚才的配对地址，只需填写「无线调试」主页面的连接端口；换网时可修改 IP。<strong>这是连接端口，通常与刚才的配对端口不同。</strong></p>
+              <div class="wifi-connect-grid">
+                <label>无线调试主页面的 IP 地址和端口<input id="wifi-connect-address" placeholder="例如 192.168.1.8:40567" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="128" list="wifi-connect-options"><datalist id="wifi-connect-options"></datalist></label>
+                <button type="button" class="button dark" id="wifi-connect">无线连接</button>
+              </div>
+            </section>
+            <p id="wifi-status" class="field-hint" role="status" aria-live="polite">无法自动发现时也可以手动填写地址；校园网可能限制手机和电脑互访，可改用同一个个人热点。重开无线调试或换网后，请核对新地址。</p>
+          </details>
+          <div class="setup-divider"></div>
+          <div class="run-mode"><div><span class="field-label">活动入口</span><span class="campaign-name"><span id="activity-name">淘金币双11狂享20亿</span></span></div><label class="radio"><input type="radio" name="mode" value="auto" checked>自动进入活动</label><span id="entry-mode-note" class="mode-note" hidden>从当前页面开始</span></div>
+          <div class="feature-toolbar" aria-label="可选功能与执行设置">
+            <div class="settings-buttons" aria-label="设置分类">
+              <button type="button" class="feature-button" id="settings-tasks-button" data-settings-toggle="tasks" aria-expanded="false" aria-controls="settings-tasks">任务设置</button>
+              <button type="button" class="feature-button" id="settings-scroll-button" data-settings-toggle="scroll" aria-expanded="false" aria-controls="settings-scroll">滚动节奏</button>
+              <button type="button" class="feature-button" id="settings-advanced-button" data-settings-toggle="advanced" aria-expanded="false" aria-controls="settings-advanced">高级选项</button>
+            </div>
+            <button type="button" class="feature-button instance-toggle" id="toggle-instances" aria-expanded="false" aria-controls="instance-panel">应用分身<span>可选</span></button>
+          </div>
+          <div class="setup-summary"><span id="settings-summary">浏览15秒 + 额外10秒 · 本轮最多80次</span><span id="instance-summary">默认使用主应用</span></div>
+          <section class="instance-settings" id="instance-panel" aria-label="淘宝实例选择" hidden>
+            <div class="settings-panel-heading"><div><h3>应用分身</h3><p>需要多个账号时再开启，同一时间只执行一个实例。</p></div></div>
+            <div class="instance-heading"><label for="app-instance">执行哪个淘宝</label><select id="app-instance" disabled><option value="">连接后读取应用与分身</option></select><button type="button" class="text-button" id="refresh-instances" disabled>↻ 刷新实例</button></div>
+            <p class="field-hint" id="instance-hint">按包名与用户空间区分实例，不读取账号信息。</p>
+            <label class="queue-toggle"><input type="checkbox" id="sequence-instances">顺序执行多个实例<span>每个实例单独使用本轮上限</span></label>
+            <div id="instance-options" hidden></div><div id="instance-results" class="instance-results" aria-live="polite"></div>
+          </section>
+          <section class="settings-panel" id="settings-tasks" data-settings-panel="tasks" aria-labelledby="settings-tasks-button" hidden>
+            <div class="settings-panel-heading"><div><h3>任务设置</h3><p>选择做哪些任务，以及一次执行多久。</p></div></div>
+            <div class="options-grid task-options"><label>默认浏览时长 / 秒<input type="number" id="browse-seconds" value="15" min="1" max="120" required></label><label>浏览额外时长 / 秒<input type="number" id="browse-extra" value="10" min="0" max="60" required></label><label>同一任务今日失败上限<input type="number" id="max-attempts" value="2" min="1" max="3" required></label><label>本轮最多执行次数<input type="number" id="max-tasks" value="80" min="1" max="300" required></label></div>
+            <span class="field-label settings-field-label">本轮任务类型</span><div class="task-kind-options" aria-label="本轮任务类型"><label><input type="checkbox" id="kind-browse" checked>浏览</label><label><input type="checkbox" id="kind-search" checked>搜索</label><label><input type="checkbox" id="kind-visit" checked>跳转</label><label><input type="checkbox" id="kind-claim" checked>累计领奖</label></div>
+            <div class="settings-switch"><label><input type="checkbox" id="claim" checked><span>领取任务奖励<small>返回任务列表后检查可领取的奖励</small></span></label></div>
+            <p class="field-hint">15秒任务默认停留约27秒，包含额外时长与2秒缓冲。检测到完成提示会提前返回；支付、邀请、关注和答题等任务留待手动处理。</p>
+          </section>
+          <section class="settings-panel" id="settings-scroll" data-settings-panel="scroll" aria-labelledby="settings-scroll-button" hidden>
+            <div class="settings-panel-heading"><div><h3>滚动节奏</h3><p>在设置范围内变化滑动，默认不增加额外等待。</p></div></div>
+            <div class="settings-switch"><label><input type="checkbox" id="scroll" checked><span>浏览期间持续上下滚动<small>连续数次后反向，仍会检查完成提示和安全验证</small></span></label></div>
+            <div class="swipe-settings">
+              <div class="swipe-range-row"><div><strong>滑动距离</strong><small>占手机屏幕高度</small></div><label>最小 / %<input type="number" id="swipe-distance-min" aria-label="滑动距离最小 / 屏高 %" value="18" min="8" max="50" step="1" required></label><label>最大 / %<input type="number" id="swipe-distance-max" aria-label="滑动距离最大 / 屏高 %" value="36" min="8" max="50" step="1" required></label></div>
+              <div class="swipe-range-row"><div><strong>滑动时长</strong><small>单次手势的持续时间</small></div><label>最小 / 秒<input type="number" id="swipe-duration-min" aria-label="滑动时长最小 / 秒" value="0.25" min="0.15" max="1.5" step="0.01" required></label><label>最大 / 秒<input type="number" id="swipe-duration-max" aria-label="滑动时长最大 / 秒" value="0.65" min="0.15" max="1.5" step="0.01" required></label></div>
+              <div class="swipe-range-row"><div><strong>额外间隔</strong><small>均为0时不额外等待</small></div><label>最小 / 秒<input type="number" id="swipe-interval-min" aria-label="额外间隔最小 / 秒" value="0" min="0" max="3" step="0.01" required></label><label>最大 / 秒<input type="number" id="swipe-interval-max" aria-label="额外间隔最大 / 秒" value="0" min="0" max="3" step="0.01" required></label></div>
+              <div class="swipe-range-row"><div><strong>同方向连续次数</strong><small>达到次数后切换方向</small></div><label>最小 / 次<input type="number" id="swipe-burst-min" aria-label="同方向连续次数最小" value="1" min="1" max="5" step="1" required></label><label>最大 / 次<input type="number" id="swipe-burst-max" aria-label="同方向连续次数最大" value="3" min="1" max="5" step="1" required></label></div>
+            </div><p class="field-hint">实际速度受手机和识别耗时影响。变化的滚动节奏不保证规避平台风控。</p>
+          </section>
+          <section class="settings-panel" id="settings-advanced" data-settings-panel="advanced" aria-labelledby="settings-advanced-button" hidden>
+            <div class="settings-panel-heading"><div><h3>高级选项</h3><p>跨应用访问、页面识别与特殊入口方式。</p></div></div>
+            <div class="settings-switch"><label><input type="checkbox" id="cross-app" checked><span>完成跨应用跳转并返回<small>返回失败时有限尝试恢复所选淘宝实例</small></span></label></div>
+            <div class="settings-switch"><label><input type="checkbox" id="ocr" checked><span>页面不可读时使用本地 OCR<small>手机截图在电脑本地识别</small></span></label></div>
+            <div class="advanced-entry"><span class="field-label">特殊入口方式</span><label class="radio"><input type="radio" name="mode" value="current">从手机当前页面开始</label><p class="field-hint">仅在手机已打开所选实例的活动页时使用；默认自动进入更适合日常执行。</p></div>
+          </section>
+          <div class="settings-save" id="settings-save" hidden><span>修改将在下次开始时使用</span><button type="button" class="button settings-apply" id="save-settings">应用设置</button></div></form>
+        </section>
+        <section class="execution-card" aria-labelledby="execution-title"><div class="execution-body"><div class="execution-symbol" id="execution-symbol">◌</div><div class="execution-copy"><div class="eyebrow" id="phase-label">READY WHEN YOU ARE</div><h2 id="execution-title">准备好，再出发</h2><p id="message">连接设备后点击开始，助手将恢复淘宝、进入活动并识别任务。</p></div><div class="countdown" id="countdown" hidden><strong id="remaining">0</strong><span>秒后检查</span></div></div><div class="action-bar"><div class="primary-actions"><button class="button orange" id="run" disabled><span>▶</span> 开始自动执行</button><span class="action-hint">先识别，再执行</span></div><div class="secondary-actions"><button class="button ghost" id="pause" disabled>Ⅱ 暂停</button><button class="button ghost stop" id="stop" disabled>□ 停止</button></div></div></section>
+        <div class="stats-context"><strong id="daily-label">连接后读取本设备今日统计</strong><span id="daily-note">同一设备、同一实例当天累计保存，重新开始不会清零</span></div>
+        <div class="stats-grid"><div class="stat"><span>今日核验完成</span><div><strong id="stat-completed">0</strong><small>次任务</small></div></div><div class="stat"><span>今日成功领奖</span><div><strong id="stat-claims">0</strong><small>次</small></div></div><div class="stat"><span>今日跨应用跳转</span><div><strong id="stat-cross">0</strong><small>次</small></div></div><div class="stat"><span>今日跳过任务</span><div><strong id="stat-skipped">0</strong><small>项</small></div></div><div class="stat"><span>今日未通过核验</span><div><strong id="stat-failed">0</strong><small>项</small></div></div></div>
+        <p class="round-summary" id="round-summary">本轮尚未开始</p>
+        <section class="card results-card"><div class="results-header"><div class="tabs" role="tablist" aria-label="执行详情"><button class="tab active" id="tasks-tab" role="tab" aria-selected="true" aria-controls="tasks-panel">任务列表 <span id="task-count">0</span></button><button class="tab" id="logs-tab" role="tab" aria-selected="false" aria-controls="logs-panel">运行日志</button></div><span class="elapsed" id="elapsed">本轮运行 00:00</span></div><div id="tasks-panel" role="tabpanel" aria-labelledby="tasks-tab"><div class="filters" aria-label="任务筛选"><button class="filter active" data-filter="all">全部</button><button class="filter" data-filter="auto">可执行</button><button class="filter" data-filter="manual">需处理</button><span>完成情况以返回后的进度核验为准</span></div><div class="task-table" id="task-table"><div class="empty-state"><div class="empty-icon">☷</div><h3>任务还没入场</h3><p>连接后点击「开始自动执行」<br>将显示重新识别出的任务和处理结果。</p></div></div></div><div id="logs-panel" role="tabpanel" aria-labelledby="logs-tab" hidden><div class="log-list" id="log-list"><p class="log-empty">执行日志会显示在这里。</p></div></div></section>
+        <details class="card diagnostics-card" id="diagnostics" hidden><summary>失败现场与反馈 <span>仅保存在本机</span></summary><p id="last-failure">执行异常时保存现场。</p><span class="field-label">当前设备当日失败目录</span><code id="failure-folder"></code><div class="diagnostics-actions"><a href="/api/diagnostics" download>导出当日诊断包 ↗</a><span>含原始手机截图及日志，提交 Issue 前请检查并遮挡个人信息。</span></div></details>
+        <footer>每一步都有回程。<span>仅本机访问 · 截图识别在本地完成 · <span id="app-version"></span></span></footer>
+      </section>
+      <aside class="side-column"><section class="card preview-card"><div class="section-heading"><h2><span class="live-dot"></span>手机画面</h2><button class="text-button" id="capture" disabled>刷新 ↻</button></div><div class="phone"><div class="phone-screen"><img id="phone-image" alt="连接手机后的屏幕预览" hidden><div id="phone-placeholder"><svg viewBox="0 0 48 64" aria-hidden="true"><rect x="9" y="3" width="30" height="56" rx="6"/><path d="M19 9h10M21 52h6"/></svg><span>等待手机连接</span><small>让任务有迹可循</small></div></div></div><div class="preview-meta"><span id="preview-source">尚未读取页面</span><span id="preview-time">—</span></div><div class="package-name" id="package-name">设备未连接</div></section>
+      <section class="help-card"><span class="help-number">小提示 / 01</span><h3>开始之前，自动核定。</h3><p>默认自动恢复所选应用并进入活动任务列表。每次开始、返回都会读取当前任务，替换出的新任务也会更新。</p><div class="help-line"></div><p>遇到验证或登录请本人处理。处理后再次开始，助手会重新定位活动。滑块适配暂列待办，不自动尝试破解。</p><div class="help-line"></div><p>今日统计按设备与应用实例分别保存。当天确认缺失的应用再次启动也会跳过，第二天重新尝试。实际刷新速度受设备截图与本地识别耗时影响。</p></section>
+      </aside>
+    </div>
+  </main><div class="toast" id="toast" role="alert" hidden></div><div class="app-exit"><p id="service-hint">关闭网页后助手仍在后台；Windows 可在右下角托盘打开控制台或退出。</p><button id="shutdown" class="text-button">退出助手</button></div>
+</body>
+</html>

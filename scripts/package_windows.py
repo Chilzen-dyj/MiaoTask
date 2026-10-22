@@ -5,7 +5,7 @@ import hashlib
 import importlib.metadata as metadata
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import platform
 import re
 import shutil
@@ -14,7 +14,11 @@ import sys
 import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
-PORTABLE_DOCS = ('USAGE.md', 'SAFETY.md', 'RELEASES.md')
+PORTABLE_DOCS = ('USAGE.md', 'SAFETY.md', 'RELEASES.md', 'LICENSING.md')
+PROJECT_LICENSES = ('LICENSE', 'NOTICE')
+LICENSE_TEXT_SUFFIXES = {'', '.txt', '.md', '.rst', '.html', '.apache', '.bsd',
+                         '.mit', '.gpl', '.gpl2', '.gpl3', '.gplv2', '.gplv3',
+                         '.lgpl', '.mpl', '.zlib', '.isc'}
 
 
 def copy_documentation(destination):
@@ -23,11 +27,13 @@ def copy_documentation(destination):
     folder.mkdir(parents=True, exist_ok=True)
     for name in PORTABLE_DOCS:
         shutil.copy2(ROOT / 'docs' / name, folder / name)
+    for name in PROJECT_LICENSES:
+        shutil.copy2(ROOT / name, destination / name)
     (destination / 'README.md').write_text(
         '# MiaoTask\n\n'
         '双击 `MiaoTask.exe`，保留 `_internal/`。升级前先退出旧助手。\n\n'
         '[使用说明](docs/USAGE.md) · [风险与隐私](docs/SAFETY.md) · '
-        '[发布记录](docs/RELEASES.md)\n',
+        '[发布记录](docs/RELEASES.md) · [许可与声明](docs/LICENSING.md)\n',
         encoding='utf-8')
 
 
@@ -44,17 +50,39 @@ def source_commit():
 
 def licenses(destination, adb_dir):
     destination.mkdir(parents=True, exist_ok=True)
+    project = destination / 'MiaoTask'
+    project.mkdir(parents=True, exist_ok=True)
+    for name in PROJECT_LICENSES:
+        shutil.copy2(ROOT / name, project / name)
     for dist in metadata.distributions():
         name = dist.metadata['Name']
+        copied = 0
         for relative in dist.files or []:
-            path = str(relative)
-            if '.dist-info/' not in path or not re.search(r'license|copying|notice', path, re.I):
+            path = PurePosixPath(str(relative).replace('\\', '/'))
+            if path.is_absolute() or '..' in path.parts:
+                continue
+            # Match declaration filenames, never an ancestor named licenses:
+            # packaging/licenses/ also contains Python code and bytecode.
+            # Package-local ONNX notices and tqdm's LICENCE remain eligible.
+            is_notice = re.search(r'licen[cs]e|copying|notice', path.name, re.I)
+            is_attribution = re.fullmatch(r'(?:authors?|copyright)(?:[._-].*)?', path.name, re.I)
+            if (not (is_notice or is_attribution)
+                    or path.suffix.lower() not in LICENSE_TEXT_SUFFIXES
+                    or '__pycache__' in path.parts):
                 continue
             source = Path(dist.locate_file(relative))
-            if source.is_file():
-                target = destination / name / Path(path.split('.dist-info/', 1)[1])
+            if source.is_file() and b'\0' not in source.read_bytes():
+                target = destination / name / Path(str(path))
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
+                copied += 1
+        if name.lower().replace('_', '-') == 'flatbuffers' and not copied:
+            if dist.version != '25.12.19':
+                raise RuntimeError('Review the FlatBuffers license supplement for this version')
+            target = destination / name
+            target.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / 'LICENSE', target / 'LICENSE')
+            shutil.copy2(ROOT / 'docs/licenses/flatbuffers-25.12.19.txt', target / 'NOTICE.txt')
     python_license = Path(sys.base_prefix) / 'LICENSE.txt'
     if python_license.is_file():
         shutil.copy2(python_license, destination / 'Python-LICENSE.txt')
@@ -103,7 +131,7 @@ def main():
                     source_commit=revision, source_repository='https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11',
                     built_utc=datetime.now(timezone.utc).isoformat(),
                     packages={d.metadata['Name']: d.version for d in metadata.distributions()},
-                    adb_bundled=True, hdc_bundled=(package / '_internal/tools/hdc.exe').exists(),
+                    adb_bundled=True, hdc_bundled=(package / '_internal/shared/tools/hdc.exe').exists(),
                     offline_models=True, smoke_test_passed=True)
     (package / 'build-manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
     archive = ROOT / 'dist' / f'{version}-windows-x64.zip'

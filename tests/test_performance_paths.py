@@ -6,8 +6,8 @@ import numpy as np
 from PIL import Image
 from rapidocr.ch_ppocr_rec import TextRecInput, TextRecOutput
 
-from modules.device_adapter import DeviceAdapter
-from modules.ocr_cache import ExactTextCache
+from backend.core.device.adapter import DeviceAdapter
+from backend.core.device.ocr import ExactTextCache
 
 
 class ExactTextCacheTests(unittest.TestCase):
@@ -62,9 +62,9 @@ class FreshFrameTests(unittest.TestCase):
 
     def test_near_simultaneous_preview_and_ocr_share_one_frame_without_aliasing(self):
         phone = self.adapter()
-        with patch('modules.device_adapter.time.monotonic', return_value=10):
+        with patch('backend.core.device.adapter.time.monotonic', return_value=10):
             phone.screenshot()
-        with patch('modules.device_adapter.time.monotonic', return_value=10.1):
+        with patch('backend.core.device.adapter.time.monotonic', return_value=10.1):
             image = phone.screenshot(max_age=.15)
             image.putpixel((0, 0), (0, 0, 0))
             self.assertEqual(phone.screenshot(max_age=.15).getpixel((0, 0)), (255, 255, 255))
@@ -72,16 +72,16 @@ class FreshFrameTests(unittest.TestCase):
 
     def test_expired_frames_and_failure_evidence_always_capture_again(self):
         phone = self.adapter()
-        with patch('modules.device_adapter.time.monotonic', return_value=10):
+        with patch('backend.core.device.adapter.time.monotonic', return_value=10):
             phone.screenshot()
-        with patch('modules.device_adapter.time.monotonic', return_value=10.2):
+        with patch('backend.core.device.adapter.time.monotonic', return_value=10.2):
             phone.screenshot(max_age=5)
             phone.screenshot()
         self.assertEqual(phone._device.screenshot.call_count, 3)
 
     def test_input_and_failed_input_invalidate_shared_frames(self):
         phone = self.adapter()
-        with patch('modules.device_adapter.time.monotonic', return_value=10):
+        with patch('backend.core.device.adapter.time.monotonic', return_value=10):
             phone.screenshot()
             phone.click(20, 30)
             phone.screenshot(max_age=.15)
@@ -95,7 +95,7 @@ class FreshFrameTests(unittest.TestCase):
         phone = self.adapter()
         phone._device.app_current.return_value = {'package': 'com.taobao.taobao'}
         phone.current_app()
-        with patch('modules.device_adapter.time.monotonic', return_value=10):
+        with patch('backend.core.device.adapter.time.monotonic', return_value=10):
             phone.screenshot()
             phone._device.app_current.return_value = {'package': 'com.example.other'}
             phone.current_app()

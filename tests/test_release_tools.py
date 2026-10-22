@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import re
+import shutil
 import tempfile
 import unittest
 
@@ -30,12 +31,23 @@ class ReleaseNotesTests(unittest.TestCase):
             with self.subTest(version=version), self.assertRaises(ValueError):
                 extract_notes(text, version)
 
-    def test_configured_version_has_a_single_reviewable_release_section(self):
+    def test_configured_version_has_reviewed_notes_or_can_prepare_pending_contributions(self):
         metadata = json.loads((ROOT / 'version.json').read_text(encoding='utf-8'))
         version = metadata['version']
         self.assertRegex(version, r'^MiaoTask-v\d+\.\d+\.\d+$')
         self.assertEqual(version, metadata['app_version'])
-        notes = extract_notes((ROOT / 'docs/RELEASES.md').read_text(encoding='utf-8'), version)
+        history = (ROOT / 'docs/RELEASES.md').read_text(encoding='utf-8')
+        if not re.search(r'^## ' + re.escape(version) + r'\s*$', history, re.M):
+            from scripts.prepare_release import prepare
+            with tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                (root / 'docs').mkdir()
+                for name in ('RELEASES.md', 'UNRELEASED.md'):
+                    shutil.copy2(ROOT / 'docs' / name, root / 'docs' / name)
+                shutil.copy2(ROOT / 'version.json', root / 'version.json')
+                prepare(root, version, 'MiaoTask 待审阅更新。')
+                history = (root / 'docs/RELEASES.md').read_text(encoding='utf-8')
+        notes = extract_notes(history, version)
         self.assertIn('MiaoTask', notes)
 
 

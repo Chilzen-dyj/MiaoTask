@@ -1,0 +1,24 @@
+FlatBuffers Python package, version 25.12.19
+
+Copyright 2014 Google Inc. All rights reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+The notice above is retained from the official Python package source:
+https://github.com/google/flatbuffers/blob/v25.12.19/python/flatbuffers/__init__.py
+The official license for this version is Apache License 2.0:
+https://github.com/google/flatbuffers/blob/v25.12.19/LICENSE
+
+The portable package includes the complete Apache License 2.0 text beside
+this notice as LICENSE. This notice was added because the corresponding
+Python wheel does not contain a standalone license file.

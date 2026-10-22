@@ -1,0 +1,66 @@
+name: Prepare release for review
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version, for example MiaoTask-v0.1.0
+        required: true
+      summary:
+        description: Short release summary
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: prepare-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.ref_type == 'branch'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Summarize pending contributions in a review branch
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_SUMMARY: ${{ inputs.summary }}
+          BASE_BRANCH: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          python scripts/prepare_release.py --version $env:RELEASE_VERSION --summary $env:RELEASE_SUMMARY
+          if ($LASTEXITCODE -ne 0) { throw 'Release preparation failed' }
+          $branch = "codex/release-prepare-$env:GITHUB_RUN_ID"
+          git switch -c $branch
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot create review branch' }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/UNRELEASED.md docs/RELEASES.md version.json
+          git commit -m "chore(release): prepare $env:RELEASE_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot commit prepared files' }
+          git diff HEAD^ HEAD --output=release-preparation.patch
+          git push origin $branch
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot push review branch' }
+          $bodyPath = Join-Path $env:RUNNER_TEMP 'release-pr.md'
+          @"
+          汇总 docs/UNRELEASED.md 到统一发布记录并清空待发布区。请审阅措辞、版本和范围后合并。
+
+          本 PR 不构建或发布 exe。合并后由维护者手动运行 Build Windows portable release，再确认发布。
+          "@ | Set-Content -LiteralPath $bodyPath -Encoding utf8
+          gh pr create --base $env:BASE_BRANCH --head $branch --title "chore(release): prepare $env:RELEASE_VERSION" --body-file $bodyPath
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot create review PR; enable Actions PR creation or use the patch artifact' }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: release-preparation
+          path: release-preparation.patch
+          if-no-files-found: ignore

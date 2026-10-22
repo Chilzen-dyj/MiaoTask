@@ -12,9 +12,9 @@ ADB / 设备自动化驱动可以操作手机，USB 调试不是只读屏幕权�
 
 控制台只监听本机地址，截图和 OCR 在本机处理，不发送给远程识别服务。程序会读取设备标识、前台应用及任务页面，用于连接和恢复。
 
-便携版默认写入 `%LOCALAPPDATA%\MiaoTask`，源码模式写入 `runtime/`；`MIAO_DATA_DIR` 可指定其他位置。主应用记录位于 `daily/YYYY-MM-DD/<设备哈希>/`，分身在其下的 `instances/<实例哈希>/` 独立保存。
+便携版默认写入 `%LOCALAPPDATA%\MiaoTask`，源码模式写入 `runtime/`；`MIAO_DATA_DIR` 可指定其他位置。记录位于 `apps/<应用>/activities/<活动>/daily/YYYY-MM-DD/<设备哈希>/instances/<实例哈希>/`，按设备、活动和实例独立保存。原淘宝活动首次接续旧 `daily/` 布局，旧文件保留。
 
-* `state.json`：今日统计及已确认不可用任务。
+* `state.json`：今日统计、任务选择、失败预算及已确认不可用任务。
 * `events.jsonl`：执行日志；`failures/`：失败说明和可取得的原始截图。
 * 全局日志与普通导出报告还可能包含设备字段及任务文本。
 
@@ -28,4 +28,4 @@ ADB / 设备自动化驱动可以操作手机，USB 调试不是只读屏幕权�
 
 `.gitignore` 与公开文件审计用于排除本地数据和凭据，图片仍需人工视觉审核，操作方式见[测试与打包文档](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11/blob/main/docs/BUILDING.md)。
 
-第三方组件的许可与通知保存在便携包 `licenses/`。原项目来源见[项目首页](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11#来源与差异)；保留上游及第三方组件的权利归属，不为上游代码另行声明新的许可证。
+项目采用 Apache 2.0 许可，见随包 `LICENSE`、`NOTICE` 和[许可说明](LICENSING.md)。第三方组件、工具和模型遵循各自许可，相关通知保存在便携包 `licenses/`。

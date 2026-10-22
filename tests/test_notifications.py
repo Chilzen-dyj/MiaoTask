@@ -2,7 +2,7 @@ import threading
 import unittest
 from unittest.mock import Mock, patch
 
-from modules import notifications
+from backend.core.service import notify as notifications
 
 
 class NotificationTests(unittest.TestCase):
@@ -48,7 +48,7 @@ class NotificationTests(unittest.TestCase):
         with patch.object(notifications.sys, 'platform', 'win32'), \
                 patch.object(notifications, '_popup_lock', lock), \
                 patch.object(notifications, '_show_security_dialog', side_effect=OSError('no desktop')), \
-                self.assertLogs('modules.notifications', level='WARNING'):
+                self.assertLogs('backend.core.service.notify', level='WARNING'):
             self.assertTrue(notifications.notify_security_attention())
             self.assertTrue(lock.acquire(timeout=2))
             lock.release()
