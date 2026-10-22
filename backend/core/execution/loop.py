@@ -7,6 +7,26 @@ from backend.core.device.instances import InstanceMismatch
 logger = logging.getLogger('backend.execution')
 
 class SessionLoop:
+    def record_task_failure(self, task):
+        if not getattr(self, '_task_budget_counted', False):
+            self._task_budget_counted = True
+            return self.task_policy.fail(task, self.config['max_attempts'])
+        return self.task_policy.failures(task)
+
+    def recover_task(self, task, **kwargs):
+        """A terminal navigation failure still consumes this task's daily budget."""
+        try:
+            return self.recover(**kwargs)
+        except (Stopped, InstanceMismatch):
+            raise
+        except NeedsAttention as exc:
+            if exc.kind == 'navigation':
+                self.record_task_failure(task)
+            raise
+        except Exception:
+            self.record_task_failure(task)
+            raise
+
     def run(self, auto_open=False):
         self.started = time.monotonic()
         try:
@@ -27,7 +47,6 @@ class SessionLoop:
             self.remember(tasks)
             candidates = []
             for task in tasks:
-                failure_key = (task.key, task.current)
                 if task.kind in ('done', 'manual') or self.records[task.key]['status'] == 'disabled':
                     continue
                 if task.kind not in self.config['enabled_task_kinds']:
@@ -38,11 +57,13 @@ class SessionLoop:
                 if not self.config['allow_cross_app'] and task.target_app:
                     self.records[task.key].update(status='disabled', reason='跨应用任务已关闭')
                     continue
-                if self.failures[failure_key] < self.config['max_attempts']:
+                if self.task_policy.failures(task) < self.config['max_attempts']:
                     candidates.append(task)
             if candidates:
-                task = min(candidates, key=lambda t: (self.failures[(t.key, t.current)],
+                task = min(candidates, key=lambda t: (self.task_policy.failures(t),
                                                       {'claim': 0, 'browse': 1, 'visit': 2, 'search': 3}.get(t.kind, 4), t.bounds[1]))
+                if self.task_policy.reason(task):
+                    continue
                 total_attempts += 1
                 self.stats.attempts += 1
                 self.records[task.key]['status'] = 'running'
@@ -50,6 +71,7 @@ class SessionLoop:
                 before = screen
                 disabled_reason = ''
                 self._task_restart_used = False
+                self._task_budget_counted = False
                 try:
                     after, explicit, cross = self.execute(task, before)
                     success = self.verify(task, before, after, explicit)
@@ -60,31 +82,33 @@ class SessionLoop:
                         # tree. Recheck the rendered page before retrying it.
                         after = self.read(force_ocr=bool(self.config['ocr'] and after.source == 'ui'))
                         if not self.is_task_list(after.nodes):
-                            after = self.recover()
+                            after = self.recover_task(task)
                         success = self.verify(task, before, after, explicit)
                     screen = after
                     if task.kind == 'claim' and success:
                         self.control.wait(.8)
                         screen = self.read()
                         if not self.is_task_list(screen.nodes):
-                            screen = self.recover()
+                            screen = self.recover_task(task)
                 except TaskUnavailable as exc:
                     self.report_failure(str(exc), task, phase='unavailable')
                     disabled_reason = self.availability_reason(task, check_installed=bool(task.target_packages)) or str(exc)
                     self.unavailable_tasks[self.unavailable_key(task)] = disabled_reason
-                    screen = self.recover()
+                    screen = self.recover_task(task)
                     success = False
                 except (Stopped, InstanceMismatch):
                     raise
                 except NeedsAttention as exc:
                     if exc.kind != 'navigation' or self._task_restart_used:
+                        if exc.kind == 'navigation':
+                            self.record_task_failure(task)
                         raise
-                    screen = self.recover(cold_start=True)
+                    screen = self.recover_task(task, cold_start=True)
                     success = self.verify(task, before, screen)
                 except Exception:
                     logger.exception('任务执行异常：%s', task.title)
                     self.report_failure('任务执行异常', task)
-                    screen = self.recover(cold_start=True)
+                    screen = self.recover_task(task, cold_start=True)
                     # Reopening may reveal already-settled server progress.
                     success = self.verify(task, before, screen)
                 if not success and not disabled_reason and task.target_packages:
@@ -93,7 +117,7 @@ class SessionLoop:
                     disabled_reason = self.availability_reason(task, check_installed=True)
                 self.remember(self.tasks(screen))
                 if disabled_reason:
-                    self.records[task.key].update(status='disabled', reason=disabled_reason)
+                    self.records[task.key].update(status='disabled', reason=disabled_reason, enabled=False)
                     logger.info('已跳过 %s：%s', task.title, disabled_reason)
                 elif success:
                     if task.kind == 'claim':
@@ -103,6 +127,7 @@ class SessionLoop:
                     updated = next((t for t in self.tasks(screen) if t.key == task.key), None)
                     can_continue = updated and updated.current < updated.total and updated.kind not in ('done', 'claim')
                     self.records[task.key].update(status='pending' if can_continue else 'done',
+                                                  enabled=bool(can_continue and not self.task_policy.reason(updated)),
                                                   reason='已核验本次进度，可继续执行' if can_continue else '已核验任务进度或奖励状态')
                     if updated is None and task.kind == 'claim':
                         self.records[task.key].update(current=task.total, reason='累计任务奖励已领取，已核验奖励状态')
@@ -112,13 +137,15 @@ class SessionLoop:
                 else:
                     self.report_failure('任务进度未增加', task, phase='verifying')
                     self.failures[(task.key, task.current)] += 1
-                    exhausted = self.failures[(task.key, task.current)] >= self.config['max_attempts']
+                    daily_failures = self.record_task_failure(task)
+                    exhausted = daily_failures >= self.config['max_attempts']
                     if exhausted:
                         self.stats.failed += 1
                     self.records[task.key].update(status='failed' if exhausted else 'pending',
-                                                  reason='任务进度未增加' + ('，已达尝试上限' if exhausted else '，先执行其他任务'))
+                                                  enabled=not exhausted and not bool(self.task_policy.reason(task)),
+                                                  reason='任务进度未增加' + ('，今日已达尝试上限' if exhausted else '，先执行其他任务'))
                     logger.warning('未核验成功：%s，当前进度 %d，尝试 %d/%d', task.title, task.current,
-                                   self.failures[(task.key, task.current)], self.config['max_attempts'])
+                                   daily_failures, self.config['max_attempts'])
                 self.update(tasks=list(self.records.values()), remaining=0)
                 # Progress changed: the same viewport may have newly available tasks.
                 seen_pages.clear()

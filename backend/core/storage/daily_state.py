@@ -86,7 +86,7 @@ class DailyState:
         self.data = dict(app_id=self.app_id, activity_id=self.activity_id, schema=1, date=self.date, device_key=self.device_key,
                          instance_id=instance_id,
                          device_type=device_type, stats=_counts({}), unavailable_tasks={},
-                         watermarks={}, skipped_task_keys=[], failures_count=0,
+                         watermarks={}, skipped_task_keys=[], failures_count=0, task_decisions={},
                          created_at=_timestamp(), updated_at=_timestamp(), last_state={})
         if self.stats_path.exists():
             try:
@@ -110,6 +110,15 @@ class DailyState:
                         or loaded.get('failures_count', -1) < 0
                         or not isinstance(loaded.get('last_state'), dict)):
                     raise ValueError('记录格式与当前设备不符')
+                decisions = loaded.get('task_decisions', {})
+                if (not isinstance(decisions, dict) or any(
+                        not isinstance(key, str) or len(key) != 24 or not isinstance(item, dict)
+                        or set(item) - {'skip', 'failures', 'exhausted'}
+                        or not isinstance(item.get('skip', False), bool)
+                        or not isinstance(item.get('exhausted', False), bool)
+                        or type(item.get('failures', 0)) is not int or item.get('failures', 0) < 0
+                        for key, item in decisions.items())):
+                    raise ValueError('任务重试记录格式无效')
                 # Accept only this schema's fields after checking the complete
                 # document. A malformed file must not partly replace defaults.
                 replacement = {key: loaded[key] for key in self.data if key in loaded}
@@ -162,6 +171,16 @@ class DailyState:
     def unavailable_tasks(self):
         with self.lock:
             return copy.deepcopy(self.data['unavailable_tasks'])
+
+    def task_decisions(self):
+        with self.lock:
+            return copy.deepcopy(self.data['task_decisions'])
+
+    def save_task_decisions(self, entries):
+        with self.lock:
+            self.data['task_decisions'] = copy.deepcopy(entries)
+            self._save()
+            self._event('task_decisions', entries=entries)
 
     def progress(self, session_id, stats, tasks=None, unavailable_tasks=None,
                  count_stats=True, baseline=None, state=None):

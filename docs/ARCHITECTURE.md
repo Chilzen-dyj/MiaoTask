@@ -82,6 +82,10 @@ runtime/apps/<app>/activities/<activity>/daily/<date>/<device_hash>/instances/<i
 
 便携版的数据根仍为 `%LOCALAPPDATA%/MiaoTask`，`MIAO_DATA_DIR` 仍可覆盖。设备、应用、活动、实例、日期分别隔离。只有明确声明 `legacy_storage=True` 的原活动会接续旧 `daily/` 记录：检查身份后复制状态、事件和失败现场，保留旧文件，首次完成后不再导入，避免重复累计。单独调用 `DailyState` 且不传命名空间时仍可读取旧布局。
 
+`core/execution/task_policy.py` 管理通用任务选择和失败预算，数据由 `DailyState` 保存；任务身份由规范化标题、任务类型、总次数、浏览时长和目标应用契约生成，不使用屏幕位置、当前进度或临时按钮文字。标题或契约变化视作新任务，避免同位置替换后继承跳过。失败累计达到本轮配置上限后当天不再选择；用户选“执行”可清除该任务失败预算和手动跳过，安全策略、任务类型设置和已确认应用缺失仍有效。停止、身份错误和人工认证不按普通失败计数。
+
+每个任务默认根据识别结果进入可执行或跳过集合，前端按钮只调整集合，不能直接启动或操作坐标。当前步骤不因切换而中断；调度器在下一安全选取点复核选择。完成和人工任务不能强制加入。任务控制请求携带工作区、任务身份和当前设备/实例/日期作用域，旧作用域必须拒绝。无法唯一识别的同签名任务不提供单独调整，避免对错误的任务生效。
+
 不把应用安装状态跨实例共享。Android 用户空间的安装情况可能不同；当天不可用事实继续随各活动、实例保存，次日重新判断。
 
 ## 设备、屏幕与模拟器
@@ -123,6 +127,7 @@ runtime/apps/<app>/activities/<activity>/daily/<date>/<device_hash>/instances/<i
 * `GET /api/inventory`、`/api/emulators`：已连接设备去重与 MuMu 实例发现。
 * `POST /api/wifi/pair|connect`：当前工作区无线配对与连接；`/api/open_app` 仅唤醒所选实例。
 * `/api/session/status|start|pause|resume|stop`、`/api/preview` 为既有别名，`/api/stats` 和 `/api/tasks` 返回指定工作区快照。
+* `POST /api/task_skip|task_execute` 调整当天队列选择，不启动线程；`task_scope` 变化后旧请求无效。
 * `/api/shutdown` 退出整个服务；所有写操作仍校验 Host、Origin 与令牌。工作区 ID 不构成授权凭据。
 
 前端 `device-manager.js` 管理设备标签和批量选择，`api.js` 统一附加设备 ID；任务判断和坐标留在后端。只为当前展示设备提供额外预览；后台任务按自己的观察周期取图。标签切换不新开端口或浏览器页面。旧静态路径保留，所有资源由固定白名单提供。

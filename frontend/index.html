@@ -45,7 +45,7 @@
             </section>
             <section aria-label="连接已配对手机">
               <h3 id="wifi-connect-title">2. 连接手机</h3>
-              <p class="field-hint">配对成功后关闭手机配对弹窗，填写「无线调试」主页面的 IP 地址和端口。<strong>这是连接端口，通常与刚才的配对端口不同。</strong></p>
+              <p class="field-hint">配对成功后关闭手机配对弹窗，IP 会沿用刚才的配对地址，只需填写「无线调试」主页面的连接端口；换网时可修改 IP。<strong>这是连接端口，通常与刚才的配对端口不同。</strong></p>
               <div class="wifi-connect-grid">
                 <label>无线调试主页面的 IP 地址和端口<input id="wifi-connect-address" placeholder="例如 192.168.1.8:40567" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="128" list="wifi-connect-options"><datalist id="wifi-connect-options"></datalist></label>
                 <button type="button" class="button dark" id="wifi-connect">无线连接</button>
@@ -73,7 +73,7 @@
           </section>
           <section class="settings-panel" id="settings-tasks" data-settings-panel="tasks" aria-labelledby="settings-tasks-button" hidden>
             <div class="settings-panel-heading"><div><h3>任务设置</h3><p>选择做哪些任务，以及一次执行多久。</p></div></div>
-            <div class="options-grid task-options"><label>默认浏览时长 / 秒<input type="number" id="browse-seconds" value="15" min="1" max="120" required></label><label>浏览额外时长 / 秒<input type="number" id="browse-extra" value="10" min="0" max="60" required></label><label>同一进度最多尝试<input type="number" id="max-attempts" value="2" min="1" max="3" required></label><label>本轮最多执行次数<input type="number" id="max-tasks" value="80" min="1" max="300" required></label></div>
+            <div class="options-grid task-options"><label>默认浏览时长 / 秒<input type="number" id="browse-seconds" value="15" min="1" max="120" required></label><label>浏览额外时长 / 秒<input type="number" id="browse-extra" value="10" min="0" max="60" required></label><label>同一任务今日失败上限<input type="number" id="max-attempts" value="2" min="1" max="3" required></label><label>本轮最多执行次数<input type="number" id="max-tasks" value="80" min="1" max="300" required></label></div>
             <span class="field-label settings-field-label">本轮任务类型</span><div class="task-kind-options" aria-label="本轮任务类型"><label><input type="checkbox" id="kind-browse" checked>浏览</label><label><input type="checkbox" id="kind-search" checked>搜索</label><label><input type="checkbox" id="kind-visit" checked>跳转</label><label><input type="checkbox" id="kind-claim" checked>累计领奖</label></div>
             <div class="settings-switch"><label><input type="checkbox" id="claim" checked><span>领取任务奖励<small>返回任务列表后检查可领取的奖励</small></span></label></div>
             <p class="field-hint">15秒任务默认停留约27秒，包含额外时长与2秒缓冲。检测到完成提示会提前返回；支付、邀请、关注和答题等任务留待手动处理。</p>

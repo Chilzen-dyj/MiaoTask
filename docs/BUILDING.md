@@ -10,9 +10,11 @@
 | `scripts/fetch_platform_tools.py` | 获取官方 Android platform-tools |
 | `scripts/package_windows.py`、`build.spec` | 独立目录构建 exe、运行自检并生成 ZIP |
 | `scripts/smoke_packaged.py` | 对解压后的 exe 检查运行环境、网页和退出 |
-| `scripts/release_notes.py` | 从统一发布记录提取指定版本正文 |
+| `scripts/prepare_release.py`、`scripts/release_notes.py` | 汇总待发布贡献、提取已审阅版本正文 |
 | `scripts/export_icons.py` | 从统一母版导出 PNG / ICO |
-| `.github/workflows/release.yml` | 锁定环境构建、保存附件和创建 Release 草稿 |
+| `.github/workflows/ci.yml` | PR 审计与回归，不构建 exe |
+| `.github/workflows/prepare-release.yml` | 手动汇总贡献并创建发布准备 PR |
+| `.github/workflows/release.yml`、`publish-release.yml` | 手动构建附件、再次确认后公开发布 |
 
 ## 验证修改
 
@@ -82,7 +84,7 @@ Expand-Archive -LiteralPath "dist/$releaseVersion-windows-x64.zip" -DestinationP
 
 0.1.0 的原有回归用例保留业务断言，仅调整迁移后的导入和资源路径。`tests/fixtures/v009_contract.json` 来自基线提交的合成页面，比较完整配置及任务解析结果；不含真实设备或账号数据。架构测试覆盖新活动注册、生命周期、活动切换限制、命名空间、旧记录接续和坐标回映接口。
 
-多设备回归覆盖真实工作线程重叠、单台暂停和停止隔离、重复物理设备租约、失效工作区与部分批量失败、全局退出及日志归属。屏幕回归覆盖旋转、横屏 OCR 回映、系统安全区域、非主显示屏输入、逻辑/物理 ID 映射及黑屏登录保护。无线接入回归覆盖地址校验、配对码不落盘、广播解析、受保护的 HTTP 接口、已有 USB 设备时指定无线连接，以及执行期间禁止换设备。实机验证记录保存在本地，手机地址、标识、配对码和原始截图不提交。本地通过不能代替各机型的入口、搜索、跳转、暂停恢复与分身验收；实验分支不发布正式 Release。
+多设备回归覆盖真实工作线程重叠、单台暂停和停止隔离、重复物理设备租约、失效工作区与部分批量失败、全局退出及日志归属。屏幕回归覆盖旋转、横屏 OCR 回映、系统安全区域、非主显示屏输入、逻辑/物理 ID 映射及黑屏登录保护。队列回归覆盖通用失败预算的重启延续、按天和实例隔离、任务替换、实时选择及认证/停止不计普通失败。无线接入回归覆盖地址校验、配对码不落盘、广播解析、受保护的 HTTP 接口、已有 USB 设备时指定无线连接，以及执行期间禁止换设备。实机验证记录保存在本地，手机地址、标识、配对码和原始截图不提交。本地通过不能代替各机型的入口、搜索、跳转、暂停恢复与分身验收；实验分支不发布正式 Release。
 
 ## 多设备实测清单
 
@@ -94,18 +96,27 @@ Expand-Archive -LiteralPath "dist/$releaseVersion-windows-x64.zip" -DestinationP
 
 ## 版本规则
 
-版本与标签使用 `MiaoTask-v0.0.9` 形式，去掉日期和活动限定；两个版本字段保持一致。功能优化递增末位（如 `0.0.9 → 0.0.10`），架构升级或扩展应用递增中位（如 `0.0.x → 0.1.0`）。`0.1.0` 以兼容原功能和配置的架构调整为基线，无线接入在独立实验分支验证；暂不规划 `1.0.0` 定稿版本。历史标签保留。
+版本与标签使用 `MiaoTask-v0.0.9` 形式，去掉日期和活动限定；两个版本字段保持一致。功能优化递增末位（如 `0.0.9 → 0.0.10`），架构升级或扩展应用递增中位（如 `0.0.x → 0.1.0`）。`0.1.0` 以兼容原功能和配置的架构调整为基线，无线接入、多设备和队列选择先在本地候选包验证；暂不规划 `1.0.0` 定稿版本。历史标签保留。
 
 ## 发布
 
-1. 新版本在 `version.json` 更新版本，在 [RELEASES.md](RELEASES.md) 顶部添加完全同名的 `## 版本号` 小节，集中维护用户可见变化。
-2. 审阅源码、文档和附件，提交最终修改，从该干净提交重新构建。文档修改后不要继续使用旧包。
-3. 维护者确认后推送源码，再推送与版本一致的标签。手动运行 Actions 只保存构建附件；标签触发构建并创建 Release 草稿。
-4. 工作流通过 `scripts/release_notes.py` 提取已审阅的小节；不会用自动提交摘要替代正文。检查草稿与 ZIP 后再公开。
+普通 PR 通过检查后合并，贡献记录累积在 [UNRELEASED.md](UNRELEASED.md)。不按 PR 发版，推送标签也不会自动构建。三个工作流均需维护者手动操作：
 
-已有同标签 Release 时工作流保留其附件，不覆盖已审阅的资产。发布状态以 GitHub Releases 为准；源码仓库不跟踪 exe 和 ZIP。
+1. **Prepare release for review**：在 Actions 选择本次发布的集成分支，填写 `MiaoTask-v0.x.y` 和一句摘要。脚本将待发布条目按类别汇总，在 `RELEASES.md` 顶部新增小节，清空已收录贡献，并同步 `version.json` 的两个字段；创建独立发布准备 PR，不生成 exe。
+2. 审阅准备 PR 的内容和版本。聚合脚本只压缩分类，不代替人工措辞审查；必要时在该 PR 精简重复条目。合并前若集成分支又有贡献，处理冲突并保留尚未收录的条目；构建要求待发布区为空，避免漏写本批变化。
+3. **Build Windows portable release**：选择已合并发布准备 PR 的分支，手动运行。工作流要求版本已有对应说明且待发布区为空；锁定依赖、验证并构建，保存 `MiaoTask-windows-x64` 附件，不创建或公开 Release。记下运行 ID 与该运行的完整提交 SHA。
+4. 下载附件检查后，手动运行 **Publish verified release assets**，填写版本、上述运行 ID 和完整 SHA，勾选确认公开。工作流核对成功构建、提交、包内清单、版本及完整性，再使用已审阅的小节发布 ZIP。已有公开版本时拒绝覆盖；标签不存在时只为这个提交创建标签。
 
-维护者明确要求同版本替换时，保持版本号与 Release 地址，合并原版本小节并提交修复，从新提交完整重建及验证 ZIP。推送代码后，将原标签对齐构建提交，替换同名 ZIP 与校验附件并同步正文；不混用旧附件、旧校验值与新源码。此操作需明确授权，默认流程仍保留已有附件。
+工作流需先合并到默认分支，GitHub 才显示手动入口。仓库 Actions 设置需允许工作流创建 PR；受保护分支仍按仓库评审规则合并。若准备阶段因该设置失败，下载 `release-preparation` 补丁附件，审阅后本地应用并提 PR。参考 [GitHub 手动运行工作流说明](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)。
+
+本地等效准备命令：
+
+```powershell
+.\.venv\Scripts\python.exe scripts/prepare_release.py --version MiaoTask-v0.1.0 --summary "一句本次更新摘要"
+# 审阅三个修改文件，提交并合并；然后按前文流程构建、检查。
+```
+
+版本已存在、回退版本、空待发布区或条目格式错误时脚本拒绝覆盖。公开版本的同版本替换仅在维护者明确授权后单独处理，不由普通工作流自动覆盖附件或移动标签。当前本地候选包不意味着已经完成发布准备或远端验收。
 
 ## 发布说明写法
 

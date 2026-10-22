@@ -4,8 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing version tag to publish
+        description: Reviewed version to publish, e.g. MiaoTask-v0.1.0
         required: true
+      source_ref:
+        description: Exact reviewed build commit SHA
+        required: true
+      confirm:
+        description: Publish this reviewed build publicly
+        type: boolean
+        default: false
       build_run_id:
         description: Successful Build Windows portable release run ID
         required: true
@@ -14,14 +21,20 @@ permissions:
   contents: write
   actions: read
 
+concurrency:
+  group: publish-${{ inputs.tag }}
+  cancel-in-progress: false
+
 jobs:
   publish:
+    if: inputs.confirm
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
       - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
@@ -32,13 +45,19 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ inputs.tag }}
           BUILD_RUN_ID: ${{ inputs.build_run_id }}
+          SOURCE_COMMIT: ${{ inputs.source_ref }}
         run: |
+          if ($env:SOURCE_COMMIT -notmatch '^[0-9a-fA-F]{40}$') { throw 'Provide the full reviewed commit SHA' }
           if ($env:RELEASE_TAG -notmatch '^MiaoTask-v[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Invalid tag' }
           if ($env:BUILD_RUN_ID -notmatch '^\d+$') { throw 'Invalid build run ID' }
           $revision = (& git rev-parse HEAD).Trim()
+          $version = (Get-Content -LiteralPath version.json -Raw | ConvertFrom-Json).version
+          if ($version -ne $env:RELEASE_TAG) { throw 'Version must match reviewed source' }
+          $existingTag = & git rev-parse --verify "$($env:RELEASE_TAG)^{commit}" 2>$null
+          if ($LASTEXITCODE -eq 0 -and $existingTag.Trim() -ne $revision) { throw 'Existing tag points to different source' }
           $build = (& gh api "repos/$env:GH_REPO/actions/runs/$env:BUILD_RUN_ID" | ConvertFrom-Json)
           if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect build run' }
-          if ($build.conclusion -ne 'success' -or $build.head_sha -ne $revision -or $build.name -ne 'Build Windows portable release') {
+          if ($build.conclusion -ne 'success' -or $build.head_sha -ne $revision -or $build.event -ne 'workflow_dispatch' -or $build.path -ne '.github/workflows/release.yml' -or $build.name -ne 'Build Windows portable release') {
             throw 'Build run must be successful and match this release commit'
           }
           & gh run download $env:BUILD_RUN_ID --name MiaoTask-windows-x64 --dir release-assets
@@ -70,7 +89,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'Release asset upload failed' }
             & gh release edit $env:RELEASE_TAG --draft=false --latest --notes-file $publicNotes
           } else {
-            & gh release create $env:RELEASE_TAG $zipPath $sumPath --verify-tag --latest --title ($env:RELEASE_TAG -replace '^MiaoTask-', 'MiaoTask ') --notes-file $publicNotes
+            & gh release create $env:RELEASE_TAG $zipPath $sumPath --target $revision --latest --title ($env:RELEASE_TAG -replace '^MiaoTask-', 'MiaoTask ') --notes-file $publicNotes
           }
           if ($LASTEXITCODE -ne 0) { throw 'Publishing failed' }
           & gh release view $env:RELEASE_TAG --json url,isDraft,assets

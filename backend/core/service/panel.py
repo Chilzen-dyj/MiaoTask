@@ -116,11 +116,13 @@ class Controller(PreviewWorker):
         # The same dictionary remains attached to an active runner across a day
         # boundary. Its contents come from this resolved device and local date.
         self.unavailable_tasks = {}
+        from backend.core.execution.task_policy import TaskPolicy
+        self.task_policy = TaskPolicy()
         self.state = dict(status='disconnected', phase='idle', connected=False,
                           message='连接手机后，点击开始执行自动进入活动并识别任务', package='', source='',
                           current_task='', remaining=0, stats=asdict(RunStats()), tasks=[],
                           config=config or (load_config(registry=self.registry, app=self.registration.app.id, activity=self.registration.activity.id) if self.registration else {}), device={}, logs=[], updated_at='',
-                          daily=None, last_failure=None, image_sequence=0, image_updated_at='',
+                          daily=None, task_scope='', last_failure=None, image_sequence=0, image_updated_at='',
                           app_instances=[], selected_instance='', instance_warnings=[], instance_queue=[],
                           app=self.registration.app.id if self.registration else '',
                           activity=self.registration.activity.id if self.registration else '',
@@ -171,7 +173,8 @@ class Controller(PreviewWorker):
             self.daily.redaction_values.add(device.serial)
             self.unavailable_tasks.clear()
             self.unavailable_tasks.update(self.daily.unavailable_tasks())
-            self.update(daily=self.daily.snapshot())
+            self.task_policy.bind(self.daily)
+            self.update(daily=self.daily.snapshot(), task_scope=uuid.uuid4().hex)
             if self.daily.recovery_warning:
                 self.log('WARNING', self.daily.recovery_warning)
             return True
@@ -245,12 +248,52 @@ class Controller(PreviewWorker):
                 raise ValueError('请先连接设备，再导出当天诊断记录')
             return self.daily.diagnostics(self.snapshot())
 
+    def _task_action(self, action, payload):
+        """Change queue eligibility; never start a worker or use cached bounds."""
+        self._ensure_daily()
+        with self._daily_lock:
+            with self.lock:
+                if getattr(self, 'closed', False) or not self.device or not self.daily:
+                    raise ValueError('请先连接设备并读取任务')
+                if payload.get('task_scope') != self.state['task_scope']:
+                    raise ValueError('设备、实例或日期已变化，请刷新任务列表')
+                identity = payload.get('task_id')
+                rows = [row for row in self.state['tasks'] if row.get('task_id') == identity]
+                if len(rows) != 1:
+                    raise ValueError('任务已更新，请重新读取任务列表')
+                row = rows[0]
+                if (not row.get('controllable') or row.get('status') == 'done'
+                        or row.get('current', 0) >= row.get('total', 1)):
+                    raise ValueError('该任务已完成或需要人工处理')
+                busy = bool(self.thread and self.thread.is_alive())
+                if busy and self.state['status'] not in ('running', 'paused'):
+                    raise ValueError('请等待设备连接或任务识别结束')
+                # Do not override disabled task types, app facts or security policy.
+                if action == 'task_execute' and (row['kind'] not in self.state['config']['enabled_task_kinds']
+                        or row['kind'] == 'claim' and not self.state['config']['claim_rewards']
+                        or row.get('target_app') and not self.state['config']['allow_cross_app']):
+                    raise ValueError('请先在任务设置中启用该任务类型')
+                from backend.core.models import normalize
+                unavailable_key = 'app:' + row['target_app'] if row.get('target_app') else 'task:' + normalize(row['title'])
+                if action == 'task_execute' and self.unavailable_tasks.get(unavailable_key):
+                    raise ValueError('该任务已确认不可用；应用安装情况变化后请重新开始识别')
+            # Persist without holding the UI state lock. The daily binding stays
+            # stable until this intent has been written to the right store.
+            self.task_policy.choose(identity, action == 'task_skip')
+            with self.lock:
+                row['enabled'] = action == 'task_execute'
+                if row.get('status') != 'running':
+                    row.update(status='disabled' if action == 'task_skip' else 'pending',
+                               reason='已跳过：用户选择今日跳过' if action == 'task_skip' else '已加入可执行队列')
+
     def _connection_status(self, message):
         self.control.check()
         self.update(status='connecting', phase='connecting', message=str(message))
         self.log('INFO', str(message))
 
     def dispatch(self, action, payload):
+        if action in ('task_skip', 'task_execute'):
+            return self._task_action(action, payload)
         control_action = action in ('pause', 'resume', 'stop')
         with self.lock:
             if getattr(self, 'closed', False):
@@ -449,6 +492,7 @@ class Controller(PreviewWorker):
                         self.device, config, self.control,
                         lambda **event: self._runner_event(session_id, action == 'run', **event), self.on_image,
                         unavailable_tasks=self.unavailable_tasks, on_failure=self.on_failure,
+                        task_policy=self.task_policy,
                         registry=self.registry, app=self.registration.app.id, activity=self.registration.activity.id)
                     self.log('INFO', ('开始识别任务' if action == 'scan' else '开始执行任务') +
                              ('：' + known[instance_id]['label'] if instance_id in known else ''))

@@ -12,7 +12,7 @@ logger = logging.getLogger('backend.execution')
 
 class Session:
     def __init__(self, device, config=None, control=None, emit=None, on_image=None, unavailable_tasks=None,
-                 on_failure=None):
+                 on_failure=None, task_policy=None):
         self.device = device
         self.config = config or self.default_config()
         self.control = control or RunControl()
@@ -20,6 +20,8 @@ class Session:
         self.reader = ScreenReader(device, self.config['ocr'], on_image=on_image)
         self.stats = RunStats()
         self.failures = Counter()
+        from backend.core.execution.task_policy import TaskPolicy
+        self.task_policy = task_policy or TaskPolicy()
         self.records = {}
         target = getattr(device, 'selected_instance', None)
         self.target_instance = target if isinstance(target, AppInstance) else None

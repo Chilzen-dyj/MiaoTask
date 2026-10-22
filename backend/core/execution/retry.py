@@ -1,7 +1,9 @@
 """Stable task identity and per-progress retry tracking."""
 import hashlib
 import logging
+from collections import Counter
 from backend.core.models import normalize
+from backend.core.execution.task_policy import task_identity
 logger = logging.getLogger('backend.execution')
 
 class TaskTracking:
@@ -12,7 +14,10 @@ class TaskTracking:
 
     def availability_reason(self, task, check_installed=False):
         if task.kind in ('manual', 'done', 'claim'):
-            return ''
+            return self.task_policy.reason(task) if task.kind == 'claim' else ''
+        decision = self.task_policy.reason(task)
+        if decision:
+            return decision
         key = self.unavailable_key(task)
         saved_reason = self.unavailable_tasks.get(key, '')
         if (task.target_packages and self.device.device_type == 'uiautomator2'
@@ -94,11 +99,21 @@ class TaskTracking:
             reason = task.skip_reason or self.availability_reason(task)
             state = ('done' if task.kind == 'done' else 'disabled' if reason.startswith(('已跳过', '未安装', '目标应用'))
                      else 'manual' if task.skip_reason else 'disabled' if reason else 'pending')
-            if previous.get('status') in ('failed', 'disabled') and task.current == previous.get('current'):
-                if previous['status'] == 'failed' or reason:
+            if (previous.get('task_id') == task_identity(task)
+                    and previous.get('status') in ('failed', 'disabled') and task.current == previous.get('current')):
+                if reason:
                     state = previous['status']
                     reason = reason or previous.get('reason', '')
-            self.records[task.key] = dict(task.to_dict(), status=state,
+            self.records[task.key] = dict(task.to_dict(), status=state, task_id=task_identity(task),
+                                          controllable=task.kind not in ('manual', 'done') and not task.skip_reason,
+                                          enabled=task.kind not in ('manual', 'done') and not reason
+                                          and task.kind in self.config['enabled_task_kinds']
+                                          and (task.kind != 'claim' or self.config['claim_rewards'])
+                                          and (not task.target_app or self.config['allow_cross_app']),
                                           reason=reason)
+        identities = Counter(row.get('task_id') for row in self.records.values())
+        for row in self.records.values():
+            if identities[row.get('task_id')] > 1:
+                row['controllable'] = False
         self.stats.skipped = sum(r['status'] in ('manual', 'disabled') for r in self.records.values())
         self.update(tasks=list(self.records.values()))
