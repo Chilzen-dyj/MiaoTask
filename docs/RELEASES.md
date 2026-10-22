@@ -2,6 +2,19 @@
 
 按新到旧维护用户可见变化。GitHub Release 正文从对应的 `## 版本号` 小节提取，发布状态以 [Releases](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11/releases) 为准。
 
+## MiaoTask-v0.1.0
+
+多设备工作区、无线连接与可扩展活动框架。
+
+* 【新增】同页多设备并行与批量配置启动；无线配对向导、IP 复用、MuMu 实例发现及不同屏幕适配。
+* 【新增】任务行实时选择“执行 / 跳过”，选择与失败次数按设备、实例、日期保存。
+* 【优化】框架、应用与前端分层，支持活动注册、分层配置，接续旧版日记录。
+* 【文档】更新首页、连接教程和公共接口手册，统一 Issue/PR 与维护者手动发布流程，补齐许可声明。
+
+下载 Windows x64 ZIP，完整解压后运行 `MiaoTask.exe`，保留 `_internal/`。升级前退出旧助手。安全认证需本人处理，诊断截图分享前请脱敏。
+
+基于 [MonsterNone/tmall-miao next](https://github.com/MonsterNone/tmall-miao) 改造。[使用说明](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11/blob/main/docs/USAGE.md) · [项目介绍](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11#readme) · [许可范围](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11/blob/main/docs/LICENSING.md)
+
 ## MiaoTask-v0.0.9
 
 分身管理、滚动设置与系统托盘。
