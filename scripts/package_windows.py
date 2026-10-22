@@ -128,7 +128,7 @@ def main():
     from smoke_packaged import smoke
     smoke(executable, package / 'self-test.json')
     manifest = dict(version=version, platform='windows-x64', python=platform.python_version(),
-                    source_commit=revision, source_repository='https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11',
+                    source_commit=revision, source_repository='https://github.com/h0ll0w-AkuZr0guY/MiaoTask',
                     built_utc=datetime.now(timezone.utc).isoformat(),
                     packages={d.metadata['Name']: d.version for d in metadata.distributions()},
                     adb_bundled=True, hdc_bundled=(package / '_internal/shared/tools/hdc.exe').exists(),
