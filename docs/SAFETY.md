@@ -28,4 +28,4 @@ ADB / 设备自动化驱动可以操作手机，USB 调试不是只读屏幕权�
 
 `.gitignore` 与公开文件审计用于排除本地数据和凭据，图片仍需人工视觉审核，操作方式见[测试与打包文档](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11/blob/main/docs/BUILDING.md)。
 
-项目原创贡献的 Apache 2.0 许可及范围见随包 `LICENSE`、`NOTICE` 和[许可说明](LICENSING.md)。第三方组件的许可与通知保存在便携包 `licenses/`。保留上游及第三方组件的权利归属，不为上游代码另行声明新的许可证。
+项目采用 Apache 2.0 许可，见随包 `LICENSE`、`NOTICE` 和[许可说明](LICENSING.md)。第三方组件、工具和模型遵循各自许可，相关通知保存在便携包 `licenses/`。

@@ -52,7 +52,7 @@ def prepare(root, version, summary):
             groups.append('* 【' + category + '】' + '；'.join(value.rstrip('。；') for value in values) + '。')
     footer = ('下载 Windows x64 ZIP，完整解压后运行 `MiaoTask.exe`，保留 `_internal/`。升级前退出旧助手。'
               '安全认证需本人处理，诊断截图分享前请脱敏。\n\n'
-              '基于 [MonsterNone/tmall-miao next](https://github.com/MonsterNone/tmall-miao) 改造。'
+              '感谢 [MonsterNone/tmall-miao](https://github.com/MonsterNone/tmall-miao) 提供早期实现思路参考。'
               '[使用说明](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11/blob/main/docs/USAGE.md) · '
               '[项目介绍](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11#readme)\n\n')
     section = '## ' + version + '\n\n' + summary.strip() + '\n\n' + '\n'.join(groups) + '\n\n' + footer

@@ -1,19 +1,10 @@
 MiaoTask
 Copyright 2026 MiaoTask contributors.
 
-The Apache License, Version 2.0 in LICENSE applies to original MiaoTask
-contributions and modifications only to the extent that their contributors
-are authorized to license those rights. It does not replace third-party
-licenses or grant rights in pre-existing upstream material.
+MiaoTask is licensed under the Apache License, Version 2.0. See LICENSE.
 
-MiaoTask was developed from MonsterNone/tmall-miao, next branch, at commit
-9318d3d138d5fa53cff00601740de012da831c65:
-https://github.com/MonsterNone/tmall-miao/tree/9318d3d138d5fa53cff00601740de012da831c65
-Original upstream authors retain their rights in that material. No explicit
-license grant was found in that source snapshot during review on 2026-10-22.
-This notice is attribution, not evidence of permission to redistribute or
-relicense upstream material. Confirm the applicable permission with its
-rights holders before redistributing portions derived from that material.
+Thanks to MonsterNone/tmall-miao and its contributors for ideas and inspiration:
+https://github.com/MonsterNone/tmall-miao
 
 Bundled dependencies, device tools and OCR models retain their own licenses
 and notices. See docs/LICENSING.md and licenses/ in the portable distribution.

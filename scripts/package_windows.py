@@ -33,7 +33,7 @@ def copy_documentation(destination):
         '# MiaoTask\n\n'
         '双击 `MiaoTask.exe`，保留 `_internal/`。升级前先退出旧助手。\n\n'
         '[使用说明](docs/USAGE.md) · [风险与隐私](docs/SAFETY.md) · '
-        '[发布记录](docs/RELEASES.md) · [许可与来源](docs/LICENSING.md)\n',
+        '[发布记录](docs/RELEASES.md) · [许可与声明](docs/LICENSING.md)\n',
         encoding='utf-8')
 
 

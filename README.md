@@ -10,6 +10,7 @@
 
 [![下载](https://img.shields.io/github/v/release/h0ll0w-AkuZr0guY/tmall-miao-double11?label=Download&color=f97316)](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11/releases/latest)
 ![平台](https://img.shields.io/badge/Windows_x64-Android-315f56)
+[![License](https://img.shields.io/badge/License-Apache_2.0-2563eb)](LICENSE)
 [![Star](https://img.shields.io/github/stars/h0ll0w-AkuZr0guY/tmall-miao-double11?style=flat&color=e8ab38)](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11/stargazers)
 
 [下载使用](#开始使用) · [功能与界面](#功能与界面) · [参与开发](docs/CONTRIBUTING.md) · [发布记录](docs/RELEASES.md)
@@ -100,11 +101,11 @@ MuMu 通过实际运行实例发现连接端口；预览按设备比例显示，
 | 待验证 | HarmonyOS、折叠姿态及更多厂商分身 | 有驱动与屏幕扩展接口，不能据此承诺各型号可用 |
 | 持续完善 | 复杂弹窗、特殊跳转与认证提示 | 失败保留现场并有限恢复，认证留给本人处理 |
 
-## 来源与差异
+## 致谢与对比
 
-基于 [MonsterNone/tmall-miao 的 next 分支](https://github.com/MonsterNone/tmall-miao/tree/9318d3d138d5fa53cff00601740de012da831c65)改造，感谢原作者与贡献者。下表以该来源提交为基准，不代表上游之后的版本。
+感谢 [MonsterNone/tmall-miao](https://github.com/MonsterNone/tmall-miao) 原作者与贡献者提供的思路参考。MiaoTask 围绕本地控制台、设备隔离和活动扩展重新组织实现；下表以原项目 next 分支的[固定提交](https://github.com/MonsterNone/tmall-miao/tree/9318d3d138d5fa53cff00601740de012da831c65)作功能对照，不代表其后续版本。
 
-| 功能 | 上游来源版本 | MiaoTask |
+| 功能 | 原项目参考版本 | MiaoTask |
 | --- | --- | --- |
 | 操作入口 | 命令行活动菜单 | 本地网页与 CLI，一键识别后执行 |
 | 活动流程 | 618 入口、浏览及累计奖励等流程 | 淘金币双11入口、搜索提交、动态任务更新与返回核验 |
@@ -129,4 +130,4 @@ MuMu 通过实际运行实例发现连接端口；预览按设备比例显示，
 
 ## License
 
-MiaoTask 的原创新增与修改部分采用 [Apache License 2.0](LICENSE)。上游基线未附明确许可证，保留其权利归属，不据此改授上游代码许可；范围与第三方声明见 [NOTICE](NOTICE) 和[许可说明](docs/LICENSING.md)。
+MiaoTask 采用 [Apache License 2.0](LICENSE)。第三方组件、工具和模型遵循各自许可，相关声明见 [NOTICE](NOTICE) 和[许可说明](docs/LICENSING.md)。

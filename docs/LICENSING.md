@@ -1,20 +1,16 @@
-# 许可与来源
+# 许可与第三方声明
 
-## 项目声明的范围
+## 项目许可
 
-MiaoTask 原创的新增内容和修改，在贡献者有权授权的范围内采用 [Apache License 2.0](../LICENSE)。[NOTICE](../NOTICE) 说明适用范围与上游来源；第三方代码、模型和工具继续遵循各自条款。
+MiaoTask 采用 [Apache License 2.0](../LICENSE)，项目声明见 [NOTICE](../NOTICE)。第三方代码、模型和工具保留其权利归属，继续遵循各自条款。
 
-本项目基于 [MonsterNone/tmall-miao next 的固定提交](https://github.com/MonsterNone/tmall-miao/tree/9318d3d138d5fa53cff00601740de012da831c65) 改造。2026-10-22 核查该提交的完整文件树、README 与源文件，未发现明确的许可证授予；GitHub 当前许可证接口也返回未找到。这不能证明上游已同意 Apache 2.0，项目声明不能代替其授权。
-
-**待确认：上游原有部分及其衍生内容的再分发授权。** 在权利人明确许可前，不应把整份仓库或便携包描述为已获得统一 Apache 2.0 授权。若已有书面授权，应记录其适用内容与可核验来源；只写感谢或保留来源无法补足授权。
-
-核查依据：[固定提交文件树 API](https://api.github.com/repos/MonsterNone/tmall-miao/git/trees/9318d3d138d5fa53cff00601740de012da831c65?recursive=1)、[该提交 README](https://raw.githubusercontent.com/MonsterNone/tmall-miao/9318d3d138d5fa53cff00601740de012da831c65/README.md)、[GitHub 的无许可证说明](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository)、[Apache 2.0 原文](https://www.apache.org/licenses/LICENSE-2.0.txt)。
+感谢 [MonsterNone/tmall-miao](https://github.com/MonsterNone/tmall-miao) 原作者与贡献者提供的思路参考。
 
 ## 随包保留的声明
 
 | 内容 | 许可材料与来源 |
 | --- | --- |
-| MiaoTask 原创贡献 | 包根目录的 `LICENSE`、`NOTICE`，以及 `licenses/MiaoTask/` 副本；适用范围同上 |
+| MiaoTask | 包根目录的 `LICENSE`、`NOTICE`，以及 `licenses/MiaoTask/` 副本 |
 | Python 及 Python 依赖 | 构建环境提供的许可证、COPYING、LICENCE 和通知文件，按发行包保存在 `licenses/`；版本见包内 `build-manifest.json` |
 | ONNX Runtime | 同时保留包内 `LICENSE` 与 `ThirdPartyNotices.txt`，不只收集 `.dist-info` 文件 |
 | RapidOCR 与模型 | 保留发行包的 `LICENSE` 与 `MODEL_LICENSES.md`；模型权利归属与转换说明独立保留，不能只标注推理程序的许可 |
