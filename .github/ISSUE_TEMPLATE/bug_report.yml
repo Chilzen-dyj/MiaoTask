@@ -1,0 +1,66 @@
+name: 问题反馈
+description: 提供复现条件、环境与脱敏证据，帮助定位异常。
+title: 'bug(模块): 简述触发条件与异常'
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请搜索已有 Issue。一个 Issue 聚焦一个问题，按标题格式填写模块与现象。
+        请勿提供序列号、Android ID、设备 IP/端口、配对码、账号或私钥；截图与日志先脱敏。完整诊断包不必直接公开。
+        贡献要求见 [CONTRIBUTING](https://github.com/h0ll0w-AkuZr0guY/tmall-miao-double11/blob/main/docs/CONTRIBUTING.md)。
+  - type: checkboxes
+    id: precheck
+    attributes:
+      label: 提交前检查
+      options:
+        - label: 已搜索相关 Issue，附件和文字已移除个人与设备敏感信息。
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: MiaoTask 版本
+      description: 填写界面或下载包标注的版本；源码运行可附提交号。
+      placeholder: 例如 MiaoTask-v0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: 运行方式
+      options:
+        - Windows 便携包
+        - 源码运行
+        - 其他（在环境中说明）
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境与设备类别
+      description: 电脑系统、设备型号/系统、目标应用版本；USB/Wi-Fi/模拟器、横竖屏，是否使用分身或多设备。未知项可说明。
+      placeholder: 请只写非敏感环境信息，不要填写设备码、IP 或配对码。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 从哪个页面开始？依次操作了什么？出现频率如何？
+      placeholder: |
+        1. 从……页面启动
+        2. 点击……
+        3. 出现……
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 预期与实际结果
+      description: 分别说明预期、实际表现，以及重连或重启后的情况。
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 脱敏截图或日志（可选）
+      description: 只附定位必需的片段；遮挡设备码、账号、头像、订单等信息。没有证据也可提交清楚的复现步骤。

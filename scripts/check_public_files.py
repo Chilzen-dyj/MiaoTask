@@ -7,7 +7,7 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
 ROOT_FILES = {
-    '.gitignore', '.gitattributes', 'README.md', 'AGENTS.md', 'main.py', 'build.spec', 'start.bat',
+    '.gitignore', '.gitattributes', 'README.md', 'AGENTS.md', 'LICENSE', 'NOTICE', 'main.py', 'build.spec', 'start.bat',
     'build/README.md', 'requirements.txt', 'requirements-build.txt', 'requirements-windows.lock', 'version.json',
 }
 SOURCE_DIRS = {'.github', 'configs', 'docs', 'modules', 'scripts', 'tests', 'web', 'frontend', 'backend', 'shared'}
@@ -16,9 +16,11 @@ PRIVATE_PARTS = {'runtime', 'private', 'screenshots', 'captures', 'reports', 'ba
 SOURCE_SUFFIXES = {'.py', '.md', '.json', '.yml', '.yaml', '.html', '.css', '.js', '.txt', '.lock'}
 # Individually reviewed documentation graphics only. Never allow arbitrary captures.
 PUBLIC_IMAGES = {
-    'docs/assets/console-desktop.webp': 'webp',
-    'docs/assets/console-v9.png': 'png',
-    'docs/assets/results-desktop.webp': 'webp',
+    'docs/assets/miaotask-overview.webp': 'webp',
+    'docs/assets/feature-wifi.webp': 'webp',
+    'docs/assets/feature-devices.webp': 'webp',
+    'docs/assets/feature-queue.webp': 'webp',
+    'docs/assets/feature-scroll.webp': 'webp',
 }
 PUBLIC_IMAGES.update({f'frontend/assets/miaotask-{size}.png': 'png'
                       for size in (16, 20, 24, 32, 40, 48, 64, 128, 180, 256, 512, 1024)})

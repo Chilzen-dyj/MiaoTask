@@ -63,7 +63,7 @@ python -m venv build/release-env
 输出为 `dist/<version>-windows-x64.zip`。包内包含：
 
 * `MiaoTask.exe` 和 `_internal/` 运行环境。
-* `README.md`、`docs/` 使用、风险和发布说明，以及 `licenses/`。
+* `README.md`、`docs/` 使用、风险、发布与许可说明，以及根目录 `LICENSE`、`NOTICE` 和 `licenses/` 第三方声明。
 * `build-manifest.json` 的源码提交与依赖信息，`self-test.json` 的离线自检结果。
 
 ## 检查实际 ZIP
