@@ -1,6 +1,8 @@
 """Taobao browse/search actions; activities provide list and return policies."""
 import logging
+import math
 import re
+import time
 from backend.core.models import normalize
 from backend.core.errors import TaskUnavailable
 logger = logging.getLogger('backend.execution')
@@ -197,6 +199,200 @@ class TaskActions:
         self.click(button)
         self.control.wait(1.4)
         return button
+
+    # 阿里 nc 滑块。手柄的文案固定是「滑块」，轨道文案是「向右滑动验证」，
+    # 这一类只要把方块拖到轨道右端就能通过。点选图片、拼图缺口对齐不在这里做。
+    # 只把“动作提示”算作验证页：直播间横幅上的「导轨滑块」「窗轨滑块」是商品名，
+    # 不能因为它出现就当成验证。
+    SLIDER_HINT_RE = re.compile(
+        r'拖动.{0,6}滑块|拖动下方滑块|按住.{0,4}滑块|向右滑动|滑动.{0,2}完成验证|'
+        r'拖动.{0,4}完成验证|滑块.{0,3}完成验证|请完成(?:下方)?验证')
+    SLIDER_HANDLE_RE = re.compile(r'^(?:滑块|拖动|按住|向右|»|>>|＞＞)$')
+    SLIDER_FAIL_RE = re.compile(
+        r'验证失败|验证未通过|验证不通过|请重试|再试一次|重试|拖动到正确位置|操作失败|验证超时')
+
+    def slider_hint(self, screen):
+        """返回「拖动滑块完成验证」这句提示所在的节点，没有就是 None。"""
+        for node in getattr(screen, 'nodes', None) or ():
+            text = normalize(node.text)
+            if text and self.SLIDER_HINT_RE.search(text):
+                return node
+        return None
+
+    def slider_handle(self, screen):
+        """找滑块手柄：文案是「滑块/拖动/»」，而且是个方块，不是整行标题。
+
+        页面上「亲，请拖动下方滑块完成验证」这句标题也含“滑块”，所以不能按
+        文案位置去配，得按形状筛：手柄占屏宽不到一半、宽高比接近 1:1；
+        同一页有多个候选时取最靠下的那个（操作区在标题下方）。
+        """
+        best = None
+        for node in getattr(screen, 'nodes', None) or ():
+            text = normalize(node.text)
+            if not text or not self.SLIDER_HANDLE_RE.match(text):
+                continue
+            left, top, right, bottom = node.bounds
+            width, height = right - left, bottom - top
+            if width <= 0 or height <= 0:
+                continue
+            if width > screen.width * .45 or height > screen.height * .15:
+                continue
+            if not .4 <= width / height <= 3.2:
+                continue
+            if best is None or bottom > best.bounds[3]:
+                best = node
+        return best
+
+    def slider_track_right(self, screen, handle):
+        """轨道右端：手柄同一行里最宽的那一块的右边；找不到就按屏宽估。"""
+        row = (handle.bounds[1] + handle.bounds[3]) // 2
+        right, widest = 0, 0
+        for node in getattr(screen, 'nodes', None) or ():
+            left, top, edge, bottom = node.bounds
+            if abs((top + bottom) // 2 - row) > 60:
+                continue
+            span = edge - left
+            if span > widest:
+                right, widest = edge, span
+        if right > handle.bounds[2]:
+            return min(right, screen.width)
+        return min(screen.width, handle.bounds[2] + round(screen.width * .8))
+
+    @staticmethod
+    def slide_path(x1, y1, x2, y2, steps=32, jitter=1.4):
+        """生成人手轨迹：按住后慢起、中段快、末端减速，纵向带一点抖动。
+
+        匀速直线是最好认的机器特征，所以这里用 smoothstep 速度曲线
+        （两端速度为 0），再叠一条正弦抖动；最后两个点强制回到基线，
+        保证落点准确。
+        """
+        dx, dy = x2 - x1, y2 - y1
+        path = []
+        for index in range(max(2, int(steps))):
+            t = index / (max(2, int(steps)) - 1)
+            ease = t * t * (3 - 2 * t)
+            wobble = math.sin(t * math.pi * 3.1) * jitter if 0 < index and t < .9 else 0.0
+            path.append((round(x1 + dx * ease), round(y1 + dy * ease + wobble)))
+        return path
+
+    def slide_gesture(self, path, duration):
+        """把整条轨迹作为一次连续手势注入（按下 → 多次移动 → 抬起）。
+
+        `device.swipe` 是匀速直线，做不到变速；优先用底层 uiautomator2 的
+        swipe_points。取不到时退回匀速滑动，宁可成功率低也不要抛出去让整轮停。
+        """
+        points = [list(point) for point in path]
+        if len(points) < 2:
+            return None
+        driver = getattr(self.device, '_device', None)
+        inject = getattr(driver, 'swipe_points', None)
+        if callable(inject):
+            try:
+                inject(points, duration=float(duration))
+                return 'points'
+            except Exception as exc:
+                logger.warning('按轨迹注入失败，退回匀速滑动：%s', exc)
+        x1, y1 = points[0]
+        x2, y2 = points[-1]
+        try:
+            try:
+                self.device.swipe(x1, y1, x2, y2, duration=float(duration))
+            except TypeError:
+                self.device.swipe(x1, y1, x2, y2)
+        except Exception as exc:
+            logger.warning('匀速滑动也失败：%s', exc)
+            return None
+        return 'linear'
+
+    def handle_slider(self, screen):
+        """滑块验证的统一入口：能自动就自动，不行就等人手动滑完再继续。
+
+        真机实测（vivo / Android 13 / 无 root）：把滑块拖到轨道末端，位置是对的，
+        但阿里 nc 直接回风控错误码（EnvWgGw、Fihi9w），换三条不同轨迹、不同时长
+        结果一样——被判掉的不是位置，是“这次触摸不是真人”。所以默认
+        slider_auto=false，只做“停下来等人滑一下，滑完自动继续”，
+        不让整轮为了一个滑块白白中断。
+        """
+        if self.slider_hint(screen) is None:
+            return True
+        if self.page.get('slider_auto') and self.solve_slider(screen):
+            return True
+        return self.wait_slider_gone()
+
+    def wait_slider_gone(self, seconds=None):
+        """停在验证页等人手动完成，页面恢复正常就返回 True。
+
+        只读屏不点任何按钮：验证页右上角的 × 等于“放弃这次验证”，
+        点了任务就白做。轮询间隔 2 秒，避免读屏本身拖慢页面响应。
+        """
+        limit = float(seconds if seconds is not None
+                      else (self.page.get('slider_wait_seconds') or 90))
+        deadline = time.time() + limit
+        self.update(message='等待手动完成滑块验证')
+        logger.warning('滑块需要本人滑动：最多等 %d 秒，滑完自动继续', round(limit))
+        while time.time() < deadline:
+            self.control.wait(2.0)
+            if time.time() >= deadline:
+                break
+            try:
+                screen = self.read()
+            except Exception as exc:
+                logger.info('等待滑块期间读屏失败：%s', exc)
+                continue
+            if self.slider_hint(screen) is None:
+                logger.info('滑块已验证通过，继续执行')
+                return True
+        logger.warning('等了 %d 秒滑块仍未通过，停止自动执行', round(limit))
+        return False
+
+    def solve_slider(self, screen, attempts=None):
+        """把「向右拖动滑块」的验证拖过去，成功返回 True。
+
+        拖不过去（次数用尽 / 找不到手柄 / 读屏失败）返回 False，由调用方决定
+        是停下来等人还是返回上一页。这里不关弹窗：验证页右上角的 × 等于
+        “放弃这次验证”，关掉只会让任务失败。
+        """
+        limit = max(1, int(attempts or self.page.get('slider_attempts') or 2))
+        for attempt in range(limit):
+            hint = self.slider_hint(screen)
+            if hint is None:
+                return True
+            handle = self.slider_handle(screen)
+            if handle is None:
+                logger.warning('识别到滑块提示，但找不到手柄节点，交给人工')
+                return False
+            hx, hy = handle.center
+            width = handle.bounds[2] - handle.bounds[0]
+            # 手柄右边缘对齐轨道右端，所以目标中心是轨道右边减去半个手柄宽。
+            target = self.slider_track_right(screen, handle) - width // 2
+            if target <= hx + 40:
+                target = max(hx + 40, round(screen.width * .9))
+            # 重试换一条轨迹：起点纵向偏移、点数、时长都变，避免撞同一个特征。
+            shift = (attempt % 2) * 2
+            steps = 30 + attempt * 6
+            duration = .82 + attempt * .18
+            path = self.slide_path(hx, hy + shift, target, hy + shift,
+                                   steps=steps, jitter=1.2 + attempt * .5)
+            self.update(message='拖动滑块完成验证')
+            logger.info('滑块验证：手柄 (%d,%d) → (%d,%d)，%d 点 / %.2fs',
+                        hx, hy, target, hy, len(path), duration)
+            mode = self.slide_gesture(path, duration)
+            self.control.wait(1.3 + attempt * .4)
+            try:
+                screen = self.read()
+            except Exception as exc:
+                logger.warning('滑块拖动后读屏失败：%s', exc)
+                return False
+            if self.slider_hint(screen) is None:
+                logger.info('滑块验证通过（%s 轨迹）', mode or '匀速')
+                return True
+            page = normalize(screen.text)
+            if self.SLIDER_FAIL_RE.search(page):
+                logger.info('滑块未通过，页面提示重试：第 %d/%d 次', attempt + 1, limit)
+            else:
+                logger.info('滑块拖动后仍停在验证页：第 %d/%d 次', attempt + 1, limit)
+        logger.warning('滑块连续 %d 次未通过，交给人工处理', limit)
+        return False
 
     @staticmethod
     def quiz_option(screen):

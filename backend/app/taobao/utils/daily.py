@@ -857,6 +857,10 @@ class DailyActivity(SearchPolicy, DestinationPolicy, TaskActions, VerificationPo
         """
         if getattr(self, '_popup_busy', False):
             return None
+        # 滑块验证页右上角那个 × 等于「放弃这次验证」，关掉只会让任务失败，
+        # 不能按普通浮层处理；这种页面交给 solve_slider。
+        if self.slider_hint(screen) is not None:
+            return None
         text = normalize(screen.text)
         # 任务面板自己也有 ✕（关闭整张面板）和“奖励”这类字，不能当成弹窗。
         markers = self.page.get('list_markers')
@@ -908,6 +912,13 @@ class DailyActivity(SearchPolicy, DestinationPolicy, TaskActions, VerificationPo
         拖动、拼图、验证码、登录框、支付密码这些“必须人动手”的东西才停。
         """
         self.assert_instance(screen)
+        # 滑块验证单独处理：能自动拖就拖，拖不过去就停下来等人滑完再继续，
+        # 不让整轮为一个滑块白白中断；真的等超时了才按拦截处理。
+        if self.slider_hint(screen) is not None:
+            if self.handle_slider(screen):
+                self._retreat_screen = None
+                return
+            logger.warning('滑块没有通过，按拦截处理')
         from backend.core.execution.guard import check_attention
         task = self._active_task
         text = normalize(screen.text)
