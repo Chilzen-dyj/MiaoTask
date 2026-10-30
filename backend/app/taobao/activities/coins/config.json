@@ -37,6 +37,7 @@
     "tap_labels": "^(?:去|立即|马上|一键|点击|立刻)?(?:施肥|浇水)(?:\\s*\\d+\\s*次)?$",
     "slider_auto": false,
     "slider_attempts": 1,
+    "slider_retries": 3,
     "slider_wait_seconds": 90,
     "rescan_rounds": 6
   },

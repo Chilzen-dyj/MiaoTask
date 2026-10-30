@@ -210,6 +210,9 @@ class TaskActions:
     SLIDER_HANDLE_RE = re.compile(r'^(?:滑块|拖动|按住|向右|»|>>|＞＞)$')
     SLIDER_FAIL_RE = re.compile(
         r'验证失败|验证未通过|验证不通过|请重试|再试一次|重试|拖动到正确位置|操作失败|验证超时')
+    # 失败后手柄会消失，框体里只剩一句「验证失败，点击框体重试(error:xxxx)」，
+    # 点一下框体才会重新出滑块。这句提示是唯一还能点的东西。
+    SLIDER_RETRY_RE = re.compile(r'点击?框?体?重试|点我重试|验证失败|验证超时')
 
     def slider_hint(self, screen):
         """返回「拖动滑块完成验证」这句提示所在的节点，没有就是 None。"""
@@ -304,6 +307,30 @@ class TaskActions:
             return None
         return 'linear'
 
+    def slider_retry(self, screen):
+        """验证失败后点一下框体，让滑块手柄重新出现。
+
+        失败态的结构是：手柄消失，框体里换成一句「验证失败，点击框体重试
+        (error:xxxx)」。这句提示是框体内的文字，点它等于点框体，手柄就会
+        回来。只认带「验证」或 error 码的提示，避免把「点我反馈」也点了。
+        """
+        target = None
+        for node in getattr(screen, 'nodes', None) or ():
+            text = normalize(node.text)
+            if not text or not self.SLIDER_RETRY_RE.search(text):
+                continue
+            lowered = text.lower()
+            if '验证' not in text and 'error' not in lowered and '重试' not in text:
+                continue
+            target = node
+            break
+        if target is None:
+            return False
+        self.update(message='点击重试验证框')
+        logger.info('滑块已失败，点击框体重试：%s', target.center)
+        self.device.click(*target.center)
+        return True
+
     def handle_slider(self, screen):
         """滑块验证的统一入口：能自动就自动，不行就等人手动滑完再继续。
 
@@ -327,7 +354,9 @@ class TaskActions:
         """
         limit = float(seconds if seconds is not None
                       else (self.page.get('slider_wait_seconds') or 90))
+        attempts = max(0, int(self.page.get('slider_retries') or 2))
         deadline = time.time() + limit
+        used = 0
         self.update(message='等待手动完成滑块验证')
         logger.warning('滑块需要本人滑动：最多等 %d 秒，滑完自动继续', round(limit))
         while time.time() < deadline:
@@ -342,6 +371,13 @@ class TaskActions:
             if self.slider_hint(screen) is None:
                 logger.info('滑块已验证通过，继续执行')
                 return True
+            # 失败态：手柄被收走，框体里只剩「验证失败，点击框体重试」。
+            # 不点这一下就只能干等到超时，滑一次没过也会卡死在这里。
+            if used < attempts and self.slider_handle(screen) is None and self.slider_retry(screen):
+                used += 1
+                deadline = max(deadline, time.time() + max(20.0, limit * .5))
+                logger.warning('已点重试 %d/%d 次，请再滑一次', used, attempts)
+                self.control.wait(2.5)
         logger.warning('等了 %d 秒滑块仍未通过，停止自动执行', round(limit))
         return False
 
@@ -359,8 +395,19 @@ class TaskActions:
                 return True
             handle = self.slider_handle(screen)
             if handle is None:
-                logger.warning('识别到滑块提示，但找不到手柄节点，交给人工')
-                return False
+                # 上一轮拖失败后手柄会被收走，框体里只剩「点击框体重试」，
+                # 先点一下把手柄要回来再接着算坐标。
+                if self.slider_retry(screen):
+                    self.control.wait(2.2)
+                    try:
+                        screen = self.read()
+                    except Exception as exc:
+                        logger.warning('点重试后读屏失败：%s', exc)
+                        return False
+                    handle = self.slider_handle(screen)
+                if handle is None:
+                    logger.warning('识别到滑块提示，但找不到手柄节点，交给人工')
+                    return False
             hx, hy = handle.center
             width = handle.bounds[2] - handle.bounds[0]
             # 手柄右边缘对齐轨道右端，所以目标中心是轨道右边减去半个手柄宽。
